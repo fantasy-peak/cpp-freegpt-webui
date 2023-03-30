@@ -1,0 +1,39 @@
+name: Linux
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-22.04]
+
+    steps:
+    # - uses: actions/checkout@v1
+    # - uses: xmake-io/github-action-setup-xmake@v1
+    #   with:
+    #     xmake-version: branch@master
+    #     actions-cache-folder: '.xmake-cache'
+    - name: Installation
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgl1-mesa-dev libglu1-mesa-dev p7zip gobjc gcc g++ wget
+        g++ -v
+        wget https://github.com/xmake-io/xmake/releases/download/v2.8.1/xmake-v2.8.1.xz.run
+        chmod 777 xmake-v2.8.1.xz.run
+        ./xmake-v2.8.1.xz.run
+        export XMAKE_ROOT="y"
+        source ~/.xmake/profile
+        xmake --version
+    - name: checkout
+      uses: actions/checkout@v3
+    - name: build
+      run: |
+       export XMAKE_ROOT="y"
+       source ~/.xmake/profile
+       xmake build -y
+       xmake install -o .
+       cd bin
+       ldd cpp-freegpt-webui
