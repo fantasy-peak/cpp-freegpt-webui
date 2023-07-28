@@ -25,17 +25,16 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-    requires std::convertible_to<std::ranges::range_value_t<R>,
-                                 typename Container::value_type>
-Container operator|(R&& r, to_helper<Container>) {
+requires std::convertible_to < std::ranges::range_value_t<R>,
+typename Container::value_type >
+    Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-    requires(!std::ranges::view<Container>)
-inline auto to() {
+requires(!std::ranges::view<Container>) inline auto to() {
     return detail::to_helper<Container>{};
 }
 
@@ -531,7 +530,9 @@ boost::asio::awaitable<void> FreeGpt::aitianhu(std::shared_ptr<Channel> ch,
     nlohmann::json rsp = nlohmann::json::parse(lines.back(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
-        co_await ch->async_send(err, "json parse error", use_nothrow_awaitable);
+        co_await ch->async_send(
+            err, fmt::format("json parse error: {}", lines.back()),
+            use_nothrow_awaitable);
         co_return;
     }
     co_await ch->async_send(
@@ -637,6 +638,7 @@ boost::asio::awaitable<void> FreeGpt::aichat(std::shared_ptr<Channel> ch,
         co_await ch->async_send(err, "json parse error", use_nothrow_awaitable);
         co_return;
     }
+    SPDLOG_INFO("rsp: {}", rsp.dump());
     co_await ch->async_send(
         err,
         rsp.value("message",
