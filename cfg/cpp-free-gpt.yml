@@ -1,2 +1,11 @@
 ---
 client_root_path: "../client"
+providers:
+  [
+    "gpt-3.5-turbo-Aichat",
+    "gpt-4-ChatgptAi",
+    "gpt-3.5-turbo-stream-DeepAi",
+    "gpt-3.5-turbo-stream-GetGpt",
+    "gpt-3.5-turbo-stream-ChatFree",
+    "gpt-3.5-turbo-AiService",
+  ]

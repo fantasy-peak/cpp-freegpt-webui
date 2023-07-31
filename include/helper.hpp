@@ -22,16 +22,14 @@ private:
     std::vector<std::jthread> m_threads;
 };
 
-inline IoContextPool::IoContextPool(std::size_t pool_size)
-    : m_next_io_context(0) {
+inline IoContextPool::IoContextPool(std::size_t pool_size) : m_next_io_context(0) {
     if (pool_size == 0)
         throw std::runtime_error("IoContextPool size is 0");
     for (std::size_t i = 0; i < pool_size; ++i) {
         auto io_context_ptr = std::make_shared<boost::asio::io_context>();
         m_io_contexts.emplace_back(io_context_ptr);
-        m_work.emplace_back(boost::asio::require(
-            io_context_ptr->get_executor(),
-            boost::asio::execution::outstanding_work.tracked));
+        m_work.emplace_back(
+            boost::asio::require(io_context_ptr->get_executor(), boost::asio::execution::outstanding_work.tracked));
     }
 }
 
@@ -57,7 +55,6 @@ inline boost::asio::awaitable<void> timeout(std::chrono::seconds duration) {
     auto now = std::chrono::steady_clock::now() + duration;
     boost::asio::steady_timer timer(co_await boost::asio::this_coro::executor);
     timer.expires_at(now);
-    auto [ec] = co_await timer.async_wait(
-        boost::asio::as_tuple(boost::asio::use_awaitable));
+    auto [ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
     co_return;
 }
