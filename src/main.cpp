@@ -29,7 +29,7 @@ inline std::unordered_map<std::string, GptCallback> gpt_function;
 
 #define ADD_METHOD(name, function) gpt_function[name] = std::bind_front(&function, app);
 
-std::string create_index_html(const std::string& file, const Config& cfg) {
+std::string createIndexHtml(const std::string& file, const Config& cfg) {
     boost::uuids::random_generator gen;
     inja::Environment env;
     nlohmann::json data;
@@ -43,7 +43,7 @@ std::string create_index_html(const std::string& file, const Config& cfg) {
     return env.render_file(file, data);
 }
 
-boost::asio::awaitable<void> send_http_response(auto& stream, auto& request, auto status) {
+boost::asio::awaitable<void> sendHttpResponse(auto& stream, auto& request, auto status) {
     boost::beast::http::response<boost::beast::http::string_body> res{status, request.version()};
     res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
     res.set(boost::beast::http::field::content_type, "text/html");
@@ -54,8 +54,8 @@ boost::asio::awaitable<void> send_http_response(auto& stream, auto& request, aut
     co_return;
 }
 
-boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Config& cfg,
-                                           boost::asio::io_context& context) {
+boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Config& cfg,
+                                          boost::asio::io_context& context) {
     boost::beast::tcp_stream stream{std::move(sock)};
     using namespace boost::asio::experimental::awaitable_operators;
     BOOST_SCOPE_EXIT(&stream) {
@@ -82,7 +82,7 @@ boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Co
         if (http_path.back() == '/')
             http_path.remove_suffix(1);
         if (http_path == cfg.chat_path) {
-            auto html = create_index_html(fmt::format("{}/html/index.html", cfg.client_root_path), cfg);
+            auto html = createIndexHtml(fmt::format("{}/html/index.html", cfg.client_root_path), cfg);
             boost::beast::http::response<boost::beast::http::string_body> res{boost::beast::http::status::ok,
                                                                               request.version()};
             res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
@@ -101,7 +101,7 @@ boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Co
             boost::beast::http::file_body::value_type body;
             body.open(file.c_str(), boost::beast::file_mode::scan, ec);
             if (ec == boost::beast::errc::no_such_file_or_directory) {
-                co_await send_http_response(stream, request, boost::beast::http::status::not_found);
+                co_await sendHttpResponse(stream, request, boost::beast::http::status::not_found);
                 co_return;
             }
             auto const size = body.size();
@@ -128,7 +128,7 @@ boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Co
                 flag = true;
             }
             if (flag) {
-                co_await send_http_response(stream, request, boost::beast::http::status::bad_request);
+                co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
                 co_return;
             }
 
@@ -150,7 +150,7 @@ boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Co
             }
             if (!gpt_function.contains(model)) {
                 SPDLOG_ERROR("Invalid request model: {}", model);
-                co_await send_http_response(stream, request, boost::beast::http::status::bad_request);
+                co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
                 co_return;
             }
             auto ch = std::make_shared<FreeGpt::Channel>(co_await boost::asio::this_coro::executor, 4096);
@@ -178,8 +178,8 @@ boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Co
             res.body().more = false;
             std::tie(ec, count) = co_await boost::beast::http::async_write(stream, sr, use_nothrow_awaitable);
         } else {
-            SPDLOG_ERROR("bad_request");
-            co_await send_http_response(stream, request, boost::beast::http::status::bad_request);
+            SPDLOG_ERROR("bad_request: [{}]", request.target());
+            co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
             co_return;
         }
         if (!keep_alive)
@@ -188,7 +188,7 @@ boost::asio::awaitable<void> start_session(boost::asio::ip::tcp::socket sock, Co
     co_return;
 }
 
-boost::asio::awaitable<void> do_session(boost::asio::ip::tcp::acceptor& acceptor, IoContextPool& pool, Config& cfg) {
+boost::asio::awaitable<void> doSession(boost::asio::ip::tcp::acceptor& acceptor, IoContextPool& pool, Config& cfg) {
     for (;;) {
         auto& context = pool.getIoContext();
         boost::asio::ip::tcp::socket socket(context);
@@ -199,7 +199,7 @@ boost::asio::awaitable<void> do_session(boost::asio::ip::tcp::acceptor& acceptor
             SPDLOG_ERROR("Accept failed, error: {}", ec.message());
             continue;
         }
-        boost::asio::co_spawn(context, start_session(std::move(socket), cfg, context), boost::asio::detached);
+        boost::asio::co_spawn(context, startSession(std::move(socket), cfg, context), boost::asio::detached);
     }
     co_return;
 }
@@ -246,7 +246,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    boost::asio::co_spawn(context, do_session(acceptor, pool, cfg), boost::asio::detached);
+    boost::asio::co_spawn(context, doSession(acceptor, pool, cfg), boost::asio::detached);
     boost::asio::signal_set sigset(context, SIGINT, SIGTERM);
     std::binary_semaphore smph_signal_main_to_thread{0};
     sigset.async_wait([&](const boost::system::error_code&, int) {

@@ -25,18 +25,15 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
-Container operator|(R&& r, to_helper<Container>) {
+requires std::convertible_to < std::ranges::range_value_t<R>,
+typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-    requires(!std::ranges::view<Container>)
-inline auto to() {
-    return detail::to_helper<Container>{};
-}
+requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -55,8 +52,8 @@ std::string md5(const std::string& str, bool reverse = true) {
     return md5_str;
 }
 
-boost::asio::awaitable<tl::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
-create_http_client(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
+boost::asio::awaitable<tl::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>> createHttpClient(
+    boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
     boost::beast::ssl_stream<boost::beast::tcp_stream> stream_{co_await boost::asio::this_coro::executor, ctx};
     boost::system::error_code err{};
     if (!SSL_set_tlsext_host_name(stream_.native_handle(), host.data())) {
@@ -88,7 +85,7 @@ create_http_client(boost::asio::ssl::context& ctx, std::string_view host, std::s
     co_return stream_;
 }
 
-std::string generate_hex_str(int length) {
+std::string generateHexStr(int length) {
     std::random_device rd;
     std::mt19937 gen(rd());
     std::uniform_int_distribution<> dis(0, 15);
@@ -102,8 +99,8 @@ std::string generate_hex_str(int length) {
 }
 
 std::string encrypt(const std::string& raw_data) {
-    auto random_key_str = generate_hex_str(16);
-    auto random_iv_str = generate_hex_str(16);
+    auto random_key_str = generateHexStr(16);
+    auto random_iv_str = generateHexStr(16);
     char key_buffer[17]{};
     memcpy(key_buffer, random_key_str.c_str(), random_key_str.size());
     std::vector<unsigned char> key = plusaes::key_from_string(&key_buffer);  // 16-char = 128-bit
@@ -119,7 +116,7 @@ std::string encrypt(const std::string& raw_data) {
     return ss.str() + random_key_str + random_iv_str;
 }
 
-auto split_string(const std::string& input, const std::string& delimiter) {
+auto splitString(const std::string& input, const std::string& delimiter) {
     std::vector<std::string> fields;
     std::string::size_type start = 0;
     std::string::size_type end = input.find(delimiter);
@@ -134,7 +131,7 @@ auto split_string(const std::string& input, const std::string& delimiter) {
     return fields;
 }
 
-std::vector<std::string> findall(const std::string& pattern, const std::string& text) {
+std::vector<std::string> findAll(const std::string& pattern, const std::string& text) {
     std::regex re(pattern);
     std::sregex_iterator it(text.begin(), text.end(), re);
     std::sregex_iterator end;
@@ -146,7 +143,7 @@ std::vector<std::string> findall(const std::string& pattern, const std::string& 
     return matches;
 }
 
-std::string char_to_hex(char c) {
+std::string charToHex(char c) {
     std::string result;
     char first, second;
 
@@ -161,7 +158,7 @@ std::string char_to_hex(char c) {
     return result;
 }
 
-std::string url_encode(const std::string& src) {
+std::string urlEncode(const std::string& src) {
     std::string result;
     std::string::const_iterator iter;
 
@@ -253,7 +250,7 @@ std::string url_encode(const std::string& src) {
             // escape
             default:
                 result.append(1, '%');
-                result.append(char_to_hex(*iter));
+                result.append(charToHex(*iter));
                 break;
         }
     }
@@ -267,8 +264,8 @@ enum class Status : uint8_t {
     HasError,
 };
 
-boost::asio::awaitable<Status> send_recv_chunk(auto& ch, auto& stream_, auto& req, int http_code,
-                                               std::function<void(std::string)> cb) {
+boost::asio::awaitable<Status> sendRecvChunk(auto& ch, auto& stream_, auto& req, int http_code,
+                                             std::function<void(std::string)> cb) {
     boost::system::error_code err{};
     auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
     if (ec) {
@@ -393,16 +390,16 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
     auto& stream_ = client.value();
 
     std::string recv;
-    auto ret = co_await send_recv_chunk(ch, stream_, req, 201, [&ch, &recv](std::string chunk_str) {
+    auto ret = co_await sendRecvChunk(ch, stream_, req, 201, [&ch, &recv](std::string chunk_str) {
         recv.append(chunk_str);
         while (true) {
             auto position = recv.find("\n");
@@ -413,7 +410,7 @@ create_client:
             msg.pop_back();
             if (msg.empty() || !msg.contains("content"))
                 continue;
-            auto fields = split_string(msg, "data: ");
+            auto fields = splitString(msg, "data: ");
             boost::system::error_code err{};
             nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
             if (line_json.is_discarded()) {
@@ -478,15 +475,15 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
     auto& stream_ = client.value();
 
-    auto ret = co_await send_recv_chunk(ch, stream_, req, 200, [&ch](std::string recv_str) {
+    auto ret = co_await sendRecvChunk(ch, stream_, req, 200, [&ch](std::string recv_str) {
         boost::system::error_code ec{};
         ch->try_send(ec, recv_str);
     });
@@ -531,9 +528,9 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
@@ -625,9 +622,9 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
@@ -690,16 +687,16 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
     auto& stream_ = client.value();
 
     std::string chunk_body;
-    auto ret = co_await send_recv_chunk(
+    auto ret = co_await sendRecvChunk(
         ch, stream_, req, 200, [&ch, &chunk_body](std::string recv_str) { chunk_body.append(std::move(recv_str)); });
     if (ret == Status::Close && recreate_num == 0) {
         recreate_num++;
@@ -711,7 +708,7 @@ create_client:
     static std::string pattern{
         R"(data-nonce=".*"\n     data-post-id=".*"\n     data-url=".*"\n     data-bot-id=".*"\n     data-width)"};
 
-    std::vector<std::string> matches = findall(pattern, chunk_body);
+    std::vector<std::string> matches = findAll(pattern, chunk_body);
     if (matches.size() != 1) {
         SPDLOG_ERROR("parsing login failed");
         co_await ch->async_send(err, chunk_body, use_nothrow_awaitable);
@@ -764,17 +761,12 @@ create_client:
     request.set("Content-Type", "application/x-www-form-urlencoded");
 
     std::stringstream ss;
-    ss << "message=" << url_encode(fmt::format("user: {}\nassistant: ", prompt)) << "&";
+    ss << "message=" << urlEncode(fmt::format("user: {}\nassistant: ", prompt)) << "&";
     ss << "_wpnonce=" << nonce << "&";
     ss << "post_id=" << post_id << "&";
-    ss << "url=" << url_encode("https://chatgpt.ai/gpt-4") << "&";
+    ss << "url=" << urlEncode("https://chatgpt.ai/gpt-4") << "&";
     ss << "action=wpaicg_chat_shortcode_message&";
     ss << "bot_id=" << bot_id;
-
-    // auto data =
-    //     fmt::format(R"(message={}&_wpnonce={}&post_id={}&url={}&action=wpaicg_chat_shortcode_message&bot_id={})",
-    //                 url_encode(fmt::format("user: {}\nassistant: ", prompt)), nonce, post_id,
-    //                 "https%3A%2F%2Fchatgpt.ai%2Fgpt-4", bot_id);
 
     SPDLOG_INFO("request: {}", ss.str());
     request.body() = ss.str();
@@ -866,16 +858,16 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
     auto& stream_ = client.value();
 
     std::string recv;
-    auto ret = co_await send_recv_chunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
+    auto ret = co_await sendRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
         recv.append(chunk_str);
         while (true) {
             auto position = recv.find("\n");
@@ -886,7 +878,7 @@ create_client:
             msg.pop_back();
             if (msg.empty() || !msg.contains("content"))
                 continue;
-            auto fields = split_string(msg, "data: ");
+            auto fields = splitString(msg, "data: ");
             boost::system::error_code err{};
             nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
             if (line_json.is_discarded()) {
@@ -934,9 +926,9 @@ create_client:
     SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await create_http_client(ctx, host, port);
+    auto client = co_await createHttpClient(ctx, host, port);
     if (!client.has_value()) {
-        SPDLOG_ERROR("create_http_client: {}", client.error());
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
         co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
         co_return;
     }
