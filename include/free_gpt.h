@@ -16,13 +16,16 @@ public:
 
     FreeGpt(Config&);
 
-    boost::asio::awaitable<void> getGpt(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> deepAi(std::shared_ptr<Channel>, nlohmann::json);
+    // not work
     boost::asio::awaitable<void> aiTianhu(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> deepAi(std::shared_ptr<Channel>, nlohmann::json);
+
+    boost::asio::awaitable<void> chatFree(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> getGpt(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aiChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> chatFree(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aiService(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> weWordle(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     Config& m_cfg;

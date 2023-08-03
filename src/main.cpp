@@ -178,7 +178,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
             res.body().more = false;
             std::tie(ec, count) = co_await boost::beast::http::async_write(stream, sr, use_nothrow_awaitable);
         } else {
-            SPDLOG_ERROR("bad_request: [{}]", request.target());
+            SPDLOG_ERROR("bad_request: [{}]", request.target().data());
             co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
             co_return;
         }
@@ -216,13 +216,15 @@ int main(int argc, char** argv) {
     SPDLOG_INFO("cfg.work_thread_num: {}", cfg.work_thread_num);
     FreeGpt app{cfg};
 
-    ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
+    ADD_METHOD("gpt-3.5-turbo-weWordle", FreeGpt::weWordle);
     ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
-    ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
     ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);
     ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
+    // not work
+    ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
+    ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();
