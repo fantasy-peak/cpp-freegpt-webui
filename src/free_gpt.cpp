@@ -1,8 +1,10 @@
+#include <chrono>
 #include <iostream>
 #include <random>
 #include <ranges>
 #include <regex>
 
+#include <fmt/chrono.h>
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/as_tuple.hpp>
@@ -25,15 +27,18 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-requires std::convertible_to < std::ranges::range_value_t<R>,
-typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
+    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
+Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
+    requires(!std::ranges::view<Container>)
+inline auto to() {
+    return detail::to_helper<Container>{};
+}
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -295,7 +300,7 @@ boost::asio::awaitable<Status> sendRecvChunk(auto& ch, auto& stream_, auto& req,
     int result_int = headers.result_int();
     SPDLOG_INFO("code: {}", result_int);
     if (result_int != http_code) {
-        SPDLOG_ERROR("reason: {}", headers.reason());
+        SPDLOG_ERROR("reason: {}", headers.reason().data());
         co_await ch->async_send(err, std::string{headers.reason()}, use_nothrow_awaitable);
         co_return Status::HasError;
     }
@@ -362,7 +367,7 @@ boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohma
     req.set("Accept", "*/*");
     req.set("Accept-Encoding", "gzip, deflate");
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
     boost::uuids::random_generator gen;
     nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
     nlohmann::json data{
@@ -449,7 +454,7 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
     constexpr std::string_view host{"api.deepai.org"};
     constexpr std::string_view port{"443"};
 
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/chat_response",
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/make_me_a_pizza",
                                                                      11};
     req.set(boost::beast::http::field::host, host);
     req.set(boost::beast::http::field::user_agent, user_agent);
@@ -457,7 +462,7 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
     req.set(boost::beast::http::field::content_type,
             fmt::format("multipart/form-data; boundary={}", MULTI_PART_BOUNDARY));
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
     nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
 
     std::ostringstream payload;
@@ -499,7 +504,7 @@ boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nloh
     BOOST_SCOPE_EXIT_END
     boost::system::error_code err{};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     constexpr std::string_view host = "www.aitianhu.com";
     constexpr std::string_view port = "443";
@@ -512,7 +517,7 @@ boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nloh
         R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
     req.set(boost::beast::http::field::content_type, "application/json");
     nlohmann::json data{
-        {"prompt", fmt::format("user: {}\nssistant:", prompt)},
+        {"prompt", fmt::format("user: {}\nassistant:", prompt)},
         {"options", std::unordered_map<std::string, std::string>{}},
         {"systemMessage",
          "You are ChatGPT, a large language model trained by OpenAI. Follow "
@@ -584,7 +589,7 @@ boost::asio::awaitable<void> FreeGpt::aiChat(std::shared_ptr<Channel> ch, nlohma
     BOOST_SCOPE_EXIT_END
     boost::system::error_code err{};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     constexpr std::string_view host = "chat-gpt.org";
     constexpr std::string_view port = "443";
@@ -739,7 +744,7 @@ create_client:
     SPDLOG_INFO("data_url: {}", data_url);
     SPDLOG_INFO("data_bot_id: {}", bot_id);
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post,
                                                                          "/wp-admin/admin-ajax.php", 11};
@@ -835,7 +840,7 @@ boost::asio::awaitable<void> FreeGpt::chatFree(std::shared_ptr<Channel> ch, nloh
     req.set("sec-fetch-site", "same-origin");
     req.set("x-requested-with", "XMLHttpRequest");
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
     nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
 
     nlohmann::json data{
@@ -903,7 +908,7 @@ boost::asio::awaitable<void> FreeGpt::aiService(std::shared_ptr<Channel> ch, nlo
     BOOST_SCOPE_EXIT_END
     boost::system::error_code err{};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content");
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     constexpr std::string_view host = "aiservice.vercel.app";
     constexpr std::string_view port = "443";
@@ -917,7 +922,7 @@ boost::asio::awaitable<void> FreeGpt::aiService(std::shared_ptr<Channel> ch, nlo
     req.set("sec-fetch-site", "same-origin");
     req.set(boost::beast::http::field::referer, "https://aiservice.vercel.app/chat");
 
-    nlohmann::json data{{"input", fmt::format("user: {}\nssistant:", prompt)}};
+    nlohmann::json data{{"input", fmt::format("user: {}\nassistant:", prompt)}};
     req.body() = data.dump();
     req.prepare_payload();
 
@@ -966,5 +971,142 @@ create_client:
         co_return;
     }
     co_await ch->async_send(err, rsp.value("data", rsp.dump()), use_nothrow_awaitable);
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    BOOST_SCOPE_EXIT(&ch) { ch->close(); }
+    BOOST_SCOPE_EXIT_END
+    boost::system::error_code err{};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    auto random = [](int len) {
+        static std::string chars{"abcdefghijklmnopqrstuvwxyz0123456789"};
+        static std::string letter{"abcdefghijklmnopqrstuvwxyz"};
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 1000000);
+        std::string random_string;
+        random_string += chars[dis(gen) % letter.length()];
+        len = len - 1;
+        for (int i = 0; i < len; i++)
+            random_string += chars[dis(gen) % chars.length()];
+        return random_string;
+    };
+    auto user_id = random(16);
+    auto app_id = random(31);
+    auto now = std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
+    auto request_date = fmt::format("{:%Y-%m-%dT%H:%M:%S.000Z}", now);
+
+    constexpr std::string_view host = "wewordle.org";
+    constexpr std::string_view port = "443";
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/gptapi/v1/android/turbo", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set("pragma", "no-cache");
+    req.set("accept", "*/*");
+    req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("Accept-Encoding", "gzip, deflate");
+
+    static std::string json_str = R"({
+        "user":"j1b892x978flimoa",
+        "messages":[
+            {
+                "role":"user",
+                "content":"user: hello\nassistant:"
+            }
+        ],
+        "subscriber":{
+            "originalPurchaseDate":null,
+            "originalApplicationVersion":null,
+            "allPurchaseDatesMillis":{},
+            "entitlements":{
+                "active":{},
+                "all":{}
+            },
+            "allPurchaseDates":{},
+            "allExpirationDatesMillis":{},
+            "allExpirationDates":{},
+            "originalAppUserId":"$RCAnonymousID:z6xyxaasvt841d5zttw7q2iisb023tf",
+            "latestExpirationDate":null,
+            "requestDate":"2023-08-03T00:29:53.000Z",
+            "latestExpirationDateMillis":null,
+            "nonSubscriptionTransactions":[],
+            "originalPurchaseDateMillis":null,
+            "managementURL":null,
+            "allPurchasedProductIdentifiers":[],
+            "firstSeen":"2023-08-03T00:29:53.000Z",
+            "activeSubscriptions":[]
+        }
+    })";
+
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    request["user"] = user_id;
+    request["subscriber"]["originalAppUserId"] = fmt::format("$RCAnonymousID:{}", app_id);
+    request["subscriber"]["firstSeen"] = request_date;
+    request["subscriber"]["requestDate"] = request_date;
+    request["messages"][0]["content"] = fmt::format("user: {}\nassistant:", prompt);
+
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    int recreate_num{0};
+create_client:
+    SPDLOG_INFO("create new client");
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        co_return;
+    }
+    boost::beast::flat_buffer b;
+    boost::beast::http::response<boost::beast::http::string_body> res;
+    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
+    if (ec == boost::beast::http::error::end_of_stream) {
+        if (recreate_num == 0) {
+            recreate_num++;
+            goto create_client;
+        }
+    }
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        co_return;
+    }
+    if (boost::beast::http::status::ok != res.result()) {
+        SPDLOG_ERROR("http code: {}", res.result_int());
+        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
+        co_return;
+    }
+    nlohmann::json rsp = nlohmann::json::parse(res.body(), nullptr, false);
+    if (rsp.is_discarded()) {
+        SPDLOG_ERROR("json parse error");
+        co_await ch->async_send(err, fmt::format("json parse error: {}", res.body()), use_nothrow_awaitable);
+        co_return;
+    }
+    if (!rsp.contains("message")) {
+        SPDLOG_ERROR("not contains message: {}", rsp.dump());
+        co_await ch->async_send(err, fmt::format("not contains message : {}", rsp.dump()), use_nothrow_awaitable);
+        co_return;
+    }
+    co_await ch->async_send(err, rsp["message"].value("content", rsp.dump()), use_nothrow_awaitable);
     co_return;
 }
