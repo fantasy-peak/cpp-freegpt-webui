@@ -1,10 +1,11 @@
 #include <chrono>
+#include <expected>
+#include <format>
 #include <iostream>
 #include <random>
 #include <ranges>
 #include <regex>
 
-#include <fmt/chrono.h>
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
 #include <boost/asio/as_tuple.hpp>
@@ -13,7 +14,6 @@
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
 #include <plusaes/plusaes.hpp>
-#include <tl/expected.hpp>
 
 #include "free_gpt.h"
 
@@ -27,18 +27,15 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
-Container operator|(R&& r, to_helper<Container>) {
+requires std::convertible_to < std::ranges::range_value_t<R>,
+typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-    requires(!std::ranges::view<Container>)
-inline auto to() {
-    return detail::to_helper<Container>{};
-}
+requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -57,19 +54,19 @@ std::string md5(const std::string& str, bool reverse = true) {
     return md5_str;
 }
 
-boost::asio::awaitable<tl::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>> createHttpClient(
-    boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
+boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
+createHttpClient(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
     boost::beast::ssl_stream<boost::beast::tcp_stream> stream_{co_await boost::asio::this_coro::executor, ctx};
     boost::system::error_code err{};
     if (!SSL_set_tlsext_host_name(stream_.native_handle(), host.data())) {
         SPDLOG_ERROR("SSL_set_tlsext_host_name");
-        co_return tl::make_unexpected(std::string("SSL_set_tlsext_host_name"));
+        co_return std::unexpected(std::string("SSL_set_tlsext_host_name"));
     }
     auto resolver = boost::asio::ip::tcp::resolver(co_await boost::asio::this_coro::executor);
     auto [ec, results] = co_await resolver.async_resolve(host.data(), port.data(), use_nothrow_awaitable);
     if (ec) {
         SPDLOG_INFO("async_resolve: {}", ec.message());
-        co_return tl::make_unexpected(ec.message());
+        co_return std::unexpected(ec.message());
     }
     for (auto& endpoint : results) {
         std::stringstream ss;
@@ -79,13 +76,13 @@ boost::asio::awaitable<tl::expected<boost::beast::ssl_stream<boost::beast::tcp_s
     boost::beast::get_lowest_layer(stream_).expires_after(std::chrono::seconds(30));
     if (auto [ec, _] = co_await boost::beast::get_lowest_layer(stream_).async_connect(results, use_nothrow_awaitable);
         ec) {
-        co_return tl::make_unexpected(ec.message());
+        co_return std::unexpected(ec.message());
     }
     boost::beast::get_lowest_layer(stream_).expires_never();
     std::tie(ec) = co_await stream_.async_handshake(boost::asio::ssl::stream_base::client, use_nothrow_awaitable);
     if (ec) {
         SPDLOG_INFO("async_handshake: {}", ec.message());
-        co_return tl::make_unexpected(ec.message());
+        co_return std::unexpected(ec.message());
     }
     co_return stream_;
 }
@@ -117,7 +114,7 @@ std::string encrypt(const std::string& raw_data) {
                          encrypted.size(), true);
     std::stringstream ss;
     std::transform(encrypted.begin(), encrypted.end(), std::ostream_iterator<std::string>(ss),
-                   [](unsigned char c) -> std::string { return fmt::format("{:02x}", int(c)); });
+                   [](unsigned char c) -> std::string { return std::format("{:02x}", int(c)); });
     return ss.str() + random_key_str + random_iv_str;
 }
 
@@ -420,7 +417,7 @@ create_client:
             nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
             if (line_json.is_discarded()) {
                 SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                ch->try_send(err, fmt::format("json parse error: [{}]", fields.back()));
+                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
                 continue;
             }
             auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
@@ -446,21 +443,21 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
     std::mt19937 mt(rd());
     std::uniform_int_distribution<uint64_t> dist(0, 100000000);
     uint64_t part1{dist(mt)};
-    auto part2 = md5(user_agent + md5(user_agent + md5(fmt::format("{}{}x", user_agent, part1))));
-    auto api_key = fmt::format("tryit-{}-{}", part1, part2);
+    auto part2 = md5(user_agent + md5(user_agent + md5(std::format("{}{}x", user_agent, part1))));
+    auto api_key = std::format("tryit-{}-{}", part1, part2);
 
     constexpr char CRLF[] = "\r\n";
     constexpr char MULTI_PART_BOUNDARY[] = "9bc627aea4f77e150e6057f78036e73f";
     constexpr std::string_view host{"api.deepai.org"};
     constexpr std::string_view port{"443"};
 
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/make_me_a_pizza",
-                                                                     11};
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/make_me_a_pizza", 11};
     req.set(boost::beast::http::field::host, host);
     req.set(boost::beast::http::field::user_agent, user_agent);
     req.set("Api-Key", api_key);
     req.set(boost::beast::http::field::content_type,
-            fmt::format("multipart/form-data; boundary={}", MULTI_PART_BOUNDARY));
+            std::format("multipart/form-data; boundary={}", MULTI_PART_BOUNDARY));
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
     nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
@@ -517,7 +514,7 @@ boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nloh
         R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
     req.set(boost::beast::http::field::content_type, "application/json");
     nlohmann::json data{
-        {"prompt", fmt::format("user: {}\nassistant:", prompt)},
+        {"prompt", std::format("user: {}\nassistant:", prompt)},
         {"options", std::unordered_map<std::string, std::string>{}},
         {"systemMessage",
          "You are ChatGPT, a large language model trained by OpenAI. Follow "
@@ -577,7 +574,7 @@ create_client:
     nlohmann::json rsp = nlohmann::json::parse(lines.back(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
-        co_await ch->async_send(err, fmt::format("json parse error: {}", lines.back()), use_nothrow_awaitable);
+        co_await ch->async_send(err, std::format("json parse error: {}", lines.back()), use_nothrow_awaitable);
         co_return;
     }
     co_await ch->async_send(err, rsp.value("text", rsp.dump()), use_nothrow_awaitable);
@@ -613,7 +610,7 @@ boost::asio::awaitable<void> FreeGpt::aiChat(std::shared_ptr<Channel> ch, nlohma
         R"(Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36)");
 
     nlohmann::json data{
-        {"message", fmt::format("user: {}\nassistant:", prompt)},
+        {"message", std::format("user: {}\nassistant:", prompt)},
         {"temperature", 1},
         {"presence_penalty", 0},
         {"top_p", 1},
@@ -766,7 +763,7 @@ create_client:
     request.set("Content-Type", "application/x-www-form-urlencoded");
 
     std::stringstream ss;
-    ss << "message=" << urlEncode(fmt::format("user: {}\nassistant: ", prompt)) << "&";
+    ss << "message=" << urlEncode(std::format("user: {}\nassistant: ", prompt)) << "&";
     ss << "_wpnonce=" << nonce << "&";
     ss << "post_id=" << post_id << "&";
     ss << "url=" << urlEncode("https://chatgpt.ai/gpt-4") << "&";
@@ -888,7 +885,7 @@ create_client:
             nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
             if (line_json.is_discarded()) {
                 SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                ch->try_send(err, fmt::format("json parse error: [{}]", fields.back()));
+                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
                 continue;
             }
             auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
@@ -922,7 +919,7 @@ boost::asio::awaitable<void> FreeGpt::aiService(std::shared_ptr<Channel> ch, nlo
     req.set("sec-fetch-site", "same-origin");
     req.set(boost::beast::http::field::referer, "https://aiservice.vercel.app/chat");
 
-    nlohmann::json data{{"input", fmt::format("user: {}\nassistant:", prompt)}};
+    nlohmann::json data{{"input", std::format("user: {}\nassistant:", prompt)}};
     req.body() = data.dump();
     req.prepare_payload();
 
@@ -967,7 +964,7 @@ create_client:
     nlohmann::json rsp = nlohmann::json::parse(res.body(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
-        co_await ch->async_send(err, fmt::format("json parse error: {}", res.body()), use_nothrow_awaitable);
+        co_await ch->async_send(err, std::format("json parse error: {}", res.body()), use_nothrow_awaitable);
         co_return;
     }
     co_await ch->async_send(err, rsp.value("data", rsp.dump()), use_nothrow_awaitable);
@@ -997,7 +994,7 @@ boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nloh
     auto user_id = random(16);
     auto app_id = random(31);
     auto now = std::chrono::time_point_cast<std::chrono::seconds>(std::chrono::system_clock::now());
-    auto request_date = fmt::format("{:%Y-%m-%dT%H:%M:%S.000Z}", now);
+    auto request_date = std::format("{:%Y-%m-%dT%H:%M:%S.000Z}", now);
 
     constexpr std::string_view host = "wewordle.org";
     constexpr std::string_view port = "443";
@@ -1048,10 +1045,10 @@ boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nloh
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
 
     request["user"] = user_id;
-    request["subscriber"]["originalAppUserId"] = fmt::format("$RCAnonymousID:{}", app_id);
+    request["subscriber"]["originalAppUserId"] = std::format("$RCAnonymousID:{}", app_id);
     request["subscriber"]["firstSeen"] = request_date;
     request["subscriber"]["requestDate"] = request_date;
-    request["messages"][0]["content"] = fmt::format("user: {}\nassistant:", prompt);
+    request["messages"][0]["content"] = std::format("user: {}\nassistant:", prompt);
 
     SPDLOG_INFO("{}", request.dump(2));
 
@@ -1099,12 +1096,12 @@ create_client:
     nlohmann::json rsp = nlohmann::json::parse(res.body(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
-        co_await ch->async_send(err, fmt::format("json parse error: {}", res.body()), use_nothrow_awaitable);
+        co_await ch->async_send(err, std::format("json parse error: {}", res.body()), use_nothrow_awaitable);
         co_return;
     }
     if (!rsp.contains("message")) {
         SPDLOG_ERROR("not contains message: {}", rsp.dump());
-        co_await ch->async_send(err, fmt::format("not contains message : {}", rsp.dump()), use_nothrow_awaitable);
+        co_await ch->async_send(err, std::format("not contains message : {}", rsp.dump()), use_nothrow_awaitable);
         co_return;
     }
     co_await ch->async_send(err, rsp["message"].value("content", rsp.dump()), use_nothrow_awaitable);

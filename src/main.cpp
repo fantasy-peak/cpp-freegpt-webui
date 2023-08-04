@@ -1,3 +1,4 @@
+#include <format>
 #include <functional>
 #include <semaphore>
 #include <string>
@@ -82,7 +83,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
         if (http_path.back() == '/')
             http_path.remove_suffix(1);
         if (http_path == cfg.chat_path) {
-            auto html = createIndexHtml(fmt::format("{}/html/index.html", cfg.client_root_path), cfg);
+            auto html = createIndexHtml(std::format("{}/html/index.html", cfg.client_root_path), cfg);
             boost::beast::http::response<boost::beast::http::string_body> res{boost::beast::http::status::ok,
                                                                               request.version()};
             res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
@@ -95,7 +96,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
         } else if (request.target().starts_with(ASSETS_PATH)) {
             std::string req_path{request.target()};
             req_path.erase(req_path.find(ASSETS_PATH), ASSETS_PATH.length());
-            auto file = fmt::format("{}{}", cfg.client_root_path, req_path);
+            auto file = std::format("{}{}", cfg.client_root_path, req_path);
             SPDLOG_INFO("load: {}", file);
             boost::beast::error_code ec;
             boost::beast::http::file_body::value_type body;
@@ -212,7 +213,6 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     auto& cfg = config.value();
-    SPDLOG_INFO("cfg.max_http_client_num: {}", cfg.max_http_client_num);
     SPDLOG_INFO("cfg.work_thread_num: {}", cfg.work_thread_num);
     FreeGpt app{cfg};
 
@@ -256,6 +256,7 @@ int main(int argc, char** argv) {
         smph_signal_main_to_thread.release();
     });
     smph_signal_main_to_thread.acquire();
+    SPDLOG_INFO("stoped ...");
     pool.stop();
     return EXIT_SUCCESS;
 }

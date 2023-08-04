@@ -30,8 +30,22 @@ cd bin
 
 Access the application in your browser using the URL:
 ```
-http://127.0.0.1:8085/chat
+http://127.0.0.1:8858/chat
 ```
+
+### Running the Docker
+Pull the Docker image from Docker Hub:
+```
+docker pull fantasypeak/freegpt:latest
+```
+
+Run the application using Docker:
+```
+docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
+// OR
+docker run -p 8858:8858 -it --name freegpt fantasypeak/freegpt:latest
+```
+
 ### WebUI
 The application interface was incorporated from the [chatgpt-clone](https://github.com/xtekky/chatgpt-clone) repository.
 
