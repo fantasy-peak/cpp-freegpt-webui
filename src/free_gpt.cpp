@@ -8,7 +8,13 @@
 
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
+#include <zlib.h>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/device/array.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/stream.hpp>
 #include <boost/scope_exit.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
@@ -27,15 +33,18 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-requires std::convertible_to < std::ranges::range_value_t<R>,
-typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
+    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
+Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
+    requires(!std::ranges::view<Container>)
+inline auto to() {
+    return detail::to_helper<Container>{};
+}
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -1105,5 +1114,121 @@ create_client:
         co_return;
     }
     co_await ch->async_send(err, rsp["message"].value("content", rsp.dump()), use_nothrow_awaitable);
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::opChatGpts(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    BOOST_SCOPE_EXIT(&ch) { ch->close(); }
+    BOOST_SCOPE_EXIT_END
+    boost::system::error_code err{};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "opchatgpts.net";
+    constexpr std::string_view port = "443";
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/wp-json/ai-chatbot/v1/chat", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set("Accept", "*/*");
+    req.set("Accept-Encoding", "gzip, deflate");
+    req.set(boost::beast::http::field::content_type, "application/json");
+
+    static std::string json_str = R"({
+        "env":"chatbot",
+        "session":"N/A",
+        "prompt":"\n",
+        "context":"Converse as if you were an AI assistant. Be friendly, creative.",
+        "messages":[],
+        "newMessage":"hello",
+        "userName":"<div class=\"mwai-name-text\">User:</div>",
+        "aiName":"<div class=\"mwai-name-text\">AI:</div>",
+        "model":"gpt-3.5-turbo",
+        "temperature":0.8,
+        "maxTokens":1024,
+        "maxResults":1,
+        "apiKey":"",
+        "service":"openai",
+        "embeddingsIndex":"",
+        "stop":""
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    request["newMessage"] = std::move(prompt);
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    int recreate_num{0};
+create_client:
+    SPDLOG_INFO("create new client");
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        co_return;
+    }
+    boost::beast::flat_buffer b;
+    boost::beast::http::response<boost::beast::http::string_body> res;
+    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
+    if (ec == boost::beast::http::error::end_of_stream) {
+        if (recreate_num == 0) {
+            recreate_num++;
+            goto create_client;
+        }
+    }
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        co_return;
+    }
+    if (boost::beast::http::status::ok != res.result()) {
+        SPDLOG_ERROR("http code: {}", res.result_int());
+        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
+        co_return;
+    }
+
+    boost::iostreams::array_source src{res.body().data(), res.body().size()};
+    boost::iostreams::filtering_istream is;
+    if (res["Content-Encoding"] == "deflate") {
+        SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
+        is.push(boost::iostreams::zlib_decompressor{-MAX_WBITS});  // deflate
+    } else if (res["Content-Encoding"] == "gzip") {
+        SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
+        is.push(boost::iostreams::gzip_decompressor{});  // gzip
+    } else if (res["Content-Encoding"] == "") {
+        SPDLOG_INFO("uncompressed: {}", res["Content-Encoding"]);
+    }
+    is.push(src);
+    std::stringstream strstream;
+    boost::iostreams::copy(is, strstream);
+
+    auto body = strstream.str();
+    nlohmann::json rsp = nlohmann::json::parse(body, nullptr, false);
+    if (rsp.is_discarded()) {
+        SPDLOG_ERROR("json parse error");
+        co_await ch->async_send(err, std::format("json parse error: {}", body), use_nothrow_awaitable);
+        co_return;
+    }
+    if (!rsp.contains("success") || !rsp["success"].get<bool>()) {
+        SPDLOG_ERROR("Response failed: {}", rsp.dump());
+        co_await ch->async_send(err, rsp.dump(), use_nothrow_awaitable);
+        co_return;
+    }
+    co_await ch->async_send(err, rsp.value("reply", rsp.dump()), use_nothrow_awaitable);
     co_return;
 }
