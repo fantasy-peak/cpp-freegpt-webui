@@ -45,10 +45,17 @@ jobs:
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_PASSWORD }}
-    - name: Build the Docker image
+    - name: Build the Docker image to dev
+      if: ${{github.ref_name}} == 'dev'
       run: |
-        pwd
-        ls
+        docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
+    - name: Build the Docker image to main
+      if: ${{github.ref_name}} == 'main'
+      run: |
         docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
-    - name: Docker image push
+    - name: Docker image push to dev
+      if: ${{github.ref_name}} == 'dev'
+      run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
+    - name: Docker image push main
+      if: ${{github.ref_name}} == 'main'
       run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest

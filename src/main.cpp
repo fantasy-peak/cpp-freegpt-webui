@@ -216,13 +216,13 @@ int main(int argc, char** argv) {
     SPDLOG_INFO("cfg.work_thread_num: {}", cfg.work_thread_num);
     FreeGpt app{cfg};
 
+    ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
     ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-weWordle", FreeGpt::weWordle);
     ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
     ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);
     ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
-    // not work
     ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
 
