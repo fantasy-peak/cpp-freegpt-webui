@@ -350,6 +350,28 @@ boost::asio::awaitable<Status> sendRecvChunk(auto& ch, auto& stream_, auto& req,
     co_return Status::Ok;
 }
 
+std::expected<std::string, std::string> decompress(auto& res) {
+    try {
+        boost::iostreams::array_source src{res.body().data(), res.body().size()};
+        boost::iostreams::filtering_istream is;
+        if (res["Content-Encoding"] == "deflate") {
+            SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
+            is.push(boost::iostreams::zlib_decompressor{-MAX_WBITS});  // deflate
+        } else if (res["Content-Encoding"] == "gzip") {
+            SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
+            is.push(boost::iostreams::gzip_decompressor{});  // gzip
+        } else if (res["Content-Encoding"] == "") {
+            SPDLOG_INFO("uncompressed: {}", res["Content-Encoding"]);
+        }
+        is.push(src);
+        std::stringstream strstream;
+        boost::iostreams::copy(is, strstream);
+        return strstream.str();
+    } catch (const std::exception& e) {
+        return std::unexpected(e.what());
+    }
+}
+
 }  // namespace
 
 FreeGpt::FreeGpt(Config& cfg) : m_cfg(cfg) {}
@@ -1019,7 +1041,7 @@ boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nloh
     req.set(boost::beast::http::field::content_type, "application/json");
     req.set("Accept-Encoding", "gzip, deflate");
 
-    static std::string json_str = R"({
+    constexpr std::string_view json_str = R"({
         "user":"j1b892x978flimoa",
         "messages":[
             {
@@ -1137,7 +1159,7 @@ boost::asio::awaitable<void> FreeGpt::opChatGpts(std::shared_ptr<Channel> ch, nl
     req.set("Accept-Encoding", "gzip, deflate");
     req.set(boost::beast::http::field::content_type, "application/json");
 
-    static std::string json_str = R"({
+    constexpr std::string_view json_str = R"({
         "env":"chatbot",
         "session":"N/A",
         "prompt":"\n",
@@ -1201,23 +1223,13 @@ create_client:
         co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
         co_return;
     }
-
-    boost::iostreams::array_source src{res.body().data(), res.body().size()};
-    boost::iostreams::filtering_istream is;
-    if (res["Content-Encoding"] == "deflate") {
-        SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
-        is.push(boost::iostreams::zlib_decompressor{-MAX_WBITS});  // deflate
-    } else if (res["Content-Encoding"] == "gzip") {
-        SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
-        is.push(boost::iostreams::gzip_decompressor{});  // gzip
-    } else if (res["Content-Encoding"] == "") {
-        SPDLOG_INFO("uncompressed: {}", res["Content-Encoding"]);
+    auto decompress_value = decompress(res);
+    if (!decompress_value.has_value()) {
+        SPDLOG_ERROR("decompress error");
+        co_await ch->async_send(err, decompress_value.error(), use_nothrow_awaitable);
+        co_return;
     }
-    is.push(src);
-    std::stringstream strstream;
-    boost::iostreams::copy(is, strstream);
-
-    auto body = strstream.str();
+    auto& body = decompress_value.value();
     nlohmann::json rsp = nlohmann::json::parse(body, nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
