@@ -1,3 +1,4 @@
+#include <experimental/scope>
 #include <format>
 #include <functional>
 #include <semaphore>
@@ -7,7 +8,6 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
-#include <boost/scope_exit.hpp>
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
@@ -67,11 +67,10 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                                           boost::asio::io_context& context) {
     boost::beast::tcp_stream stream{std::move(sock)};
     using namespace boost::asio::experimental::awaitable_operators;
-    BOOST_SCOPE_EXIT(&stream) {
+    std::experimental::scope_exit auto_exit{[&stream] {
         boost::beast::error_code ec;
         stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
-    }
-    BOOST_SCOPE_EXIT_END
+    }};
     while (true) {
         boost::beast::flat_buffer buffer;
         boost::beast::http::request<boost::beast::http::string_body> request;
