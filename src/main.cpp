@@ -31,6 +31,8 @@ inline std::unordered_map<std::string, GptCallback> gpt_function;
 #define ADD_METHOD(name, function) gpt_function[name] = std::bind_front(&function, app);
 
 void setEnvironment(auto& cfg) {
+    if (!cfg.enable_proxy)
+        return;
     auto [http_proxy] = getEnv("http_proxy");
     if (!http_proxy.empty())
         cfg.http_proxy = std::move(http_proxy);

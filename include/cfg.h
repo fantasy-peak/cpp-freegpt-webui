@@ -10,6 +10,8 @@ struct Config {
     std::string port{"8858"};
     std::string chat_path{"/chat"};
     std::vector<std::string> providers;
+    bool enable_proxy;
     std::string http_proxy;
 };
-YCS_ADD_STRUCT(Config, client_root_path, interval, work_thread_num, host, port, chat_path, providers, http_proxy)
+YCS_ADD_STRUCT(Config, client_root_path, interval, work_thread_num, host, port, chat_path, providers, enable_proxy,
+               http_proxy)
