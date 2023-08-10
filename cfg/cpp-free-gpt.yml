@@ -1,5 +1,6 @@
 ---
 client_root_path: "../client"
+enable_proxy: true
 providers:
   [
     # "gpt-3.5-turbo-Aichat",
