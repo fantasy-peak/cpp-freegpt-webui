@@ -58,3 +58,17 @@ inline boost::asio::awaitable<void> timeout(std::chrono::seconds duration) {
     auto [ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
     co_return;
 }
+
+template <typename... Args>
+inline auto getEnv(Args&&... args) {
+    auto impl = []<std::size_t... I>(auto&& tp, std::index_sequence<I...>) {
+        auto func = [](std::string_view env_name) {
+            const char* env = std::getenv(env_name.data());
+            if (env == nullptr)
+                throw std::runtime_error(fmt::format("can't get {} from env", env_name));
+            return std::string{env};
+        };
+        return std::make_tuple(func(std::get<I>(tp))...);
+    };
+    return impl(std::forward_as_tuple(args...), std::index_sequence_for<Args...>{});
+}

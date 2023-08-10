@@ -1,5 +1,6 @@
 #pragma once
 
+#include <expected>
 #include <memory>
 
 #include <boost/asio/co_spawn.hpp>
@@ -27,5 +28,8 @@ public:
     boost::asio::awaitable<void> opChatGpts(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
+    boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
+    createHttpClient(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port);
+
     Config& m_cfg;
 };

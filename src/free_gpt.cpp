@@ -1,5 +1,4 @@
 #include <chrono>
-#include <expected>
 #include <format>
 #include <iostream>
 #include <random>
@@ -61,39 +60,6 @@ std::string md5(const std::string& str, bool reverse = true) {
     if (reverse)
         std::ranges::reverse(md5_str);
     return md5_str;
-}
-
-boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
-createHttpClient(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
-    boost::beast::ssl_stream<boost::beast::tcp_stream> stream_{co_await boost::asio::this_coro::executor, ctx};
-    boost::system::error_code err{};
-    if (!SSL_set_tlsext_host_name(stream_.native_handle(), host.data())) {
-        SPDLOG_ERROR("SSL_set_tlsext_host_name");
-        co_return std::unexpected(std::string("SSL_set_tlsext_host_name"));
-    }
-    auto resolver = boost::asio::ip::tcp::resolver(co_await boost::asio::this_coro::executor);
-    auto [ec, results] = co_await resolver.async_resolve(host.data(), port.data(), use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_INFO("async_resolve: {}", ec.message());
-        co_return std::unexpected(ec.message());
-    }
-    for (auto& endpoint : results) {
-        std::stringstream ss;
-        ss << endpoint.endpoint();
-        SPDLOG_INFO("resolver_results: [{}]", ss.str());
-    }
-    boost::beast::get_lowest_layer(stream_).expires_after(std::chrono::seconds(30));
-    if (auto [ec, _] = co_await boost::beast::get_lowest_layer(stream_).async_connect(results, use_nothrow_awaitable);
-        ec) {
-        co_return std::unexpected(ec.message());
-    }
-    boost::beast::get_lowest_layer(stream_).expires_never();
-    std::tie(ec) = co_await stream_.async_handshake(boost::asio::ssl::stream_base::client, use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_INFO("async_handshake: {}", ec.message());
-        co_return std::unexpected(ec.message());
-    }
-    co_return stream_;
 }
 
 std::string generateHexStr(int length) {
@@ -306,8 +272,9 @@ boost::asio::awaitable<Status> sendRecvChunk(auto& ch, auto& stream_, auto& req,
     int result_int = headers.result_int();
     SPDLOG_INFO("code: {}", result_int);
     if (result_int != http_code) {
-        SPDLOG_ERROR("reason: {}", headers.reason().data());
-        co_await ch->async_send(err, std::string{headers.reason()}, use_nothrow_awaitable);
+        std::string reason{headers.reason()};
+        SPDLOG_ERROR("reason: {}", reason);
+        co_await ch->async_send(err, std::move(reason), use_nothrow_awaitable);
         co_return Status::HasError;
     }
 
@@ -375,6 +342,105 @@ std::expected<std::string, std::string> decompress(auto& res) {
 }  // namespace
 
 FreeGpt::FreeGpt(Config& cfg) : m_cfg(cfg) {}
+
+boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
+FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
+    if (m_cfg.http_proxy.empty()) {
+        boost::beast::ssl_stream<boost::beast::tcp_stream> stream_{co_await boost::asio::this_coro::executor, ctx};
+        boost::system::error_code err{};
+        if (!SSL_set_tlsext_host_name(stream_.native_handle(), host.data())) {
+            SPDLOG_ERROR("SSL_set_tlsext_host_name");
+            co_return std::unexpected(std::string("SSL_set_tlsext_host_name"));
+        }
+        auto resolver = boost::asio::ip::tcp::resolver(co_await boost::asio::this_coro::executor);
+        auto [ec, results] = co_await resolver.async_resolve(host.data(), port.data(), use_nothrow_awaitable);
+        if (ec) {
+            SPDLOG_INFO("async_resolve: {}", ec.message());
+            co_return std::unexpected(ec.message());
+        }
+        for (auto& endpoint : results) {
+            std::stringstream ss;
+            ss << endpoint.endpoint();
+            SPDLOG_INFO("resolver_results: [{}]", ss.str());
+        }
+        boost::beast::get_lowest_layer(stream_).expires_after(std::chrono::seconds(30));
+        if (auto [ec, _] =
+                co_await boost::beast::get_lowest_layer(stream_).async_connect(results, use_nothrow_awaitable);
+            ec) {
+            co_return std::unexpected(ec.message());
+        }
+        boost::beast::get_lowest_layer(stream_).expires_never();
+        std::tie(ec) = co_await stream_.async_handshake(boost::asio::ssl::stream_base::client, use_nothrow_awaitable);
+        if (ec) {
+            SPDLOG_INFO("async_handshake: {}", ec.message());
+            co_return std::unexpected(ec.message());
+        }
+        co_return stream_;
+    }
+
+    SPDLOG_INFO("http_proxy: [{}]", m_cfg.http_proxy);
+    static const auto url_regex =
+        std::regex(R"regex((http|https)://([^/ :]+):?([^/ ]*)((/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)))regex",
+                   std::regex_constants::icase | std::regex_constants::optimize);
+    auto match = std::smatch();
+    if (!std::regex_match(m_cfg.http_proxy, match, url_regex)) {
+        SPDLOG_ERROR("invalid http_proxy: {}", m_cfg.http_proxy);
+        co_return std::unexpected("invalid http_proxy");
+    }
+    // auto& protocol = match[1];
+    // auto& target = match[4];
+    std::string_view proxy_host{m_cfg.http_proxy.data() + match.position(2), static_cast<uint64_t>(match.length(2))};
+    std::string_view proxy_port{m_cfg.http_proxy.data() + match.position(3), static_cast<uint64_t>(match.length(3))};
+
+    SPDLOG_INFO("proxy host: [{}], port: [{}]", proxy_host, proxy_port);
+
+    auto resolver = boost::asio::ip::tcp::resolver(co_await boost::asio::this_coro::executor);
+    auto [ec, results] = co_await resolver.async_resolve(proxy_host, proxy_port, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_INFO("async_resolve: {}", ec.message());
+        co_return std::unexpected(ec.message());
+    }
+    boost::asio::ip::tcp::socket socket_{co_await boost::asio::this_coro::executor};
+    if (auto [ec, count] = co_await boost::asio::async_connect(socket_, results, use_nothrow_awaitable); ec) {
+        SPDLOG_INFO("async_connect: {}", ec.message());
+        co_return std::unexpected(ec.message());
+    }
+
+    boost::beast::ssl_stream<boost::beast::tcp_stream> stream_{std::move(socket_), ctx};
+    int http_version = 11;
+    boost::beast::http::request<boost::beast::http::string_body> connect_req{boost::beast::http::verb::connect, host,
+                                                                             http_version};
+    connect_req.set(boost::beast::http::field::host, host);
+
+    std::size_t count;
+    std::tie(ec, count) = co_await boost::beast::http::async_write(boost::beast::get_lowest_layer(stream_),
+                                                                   connect_req, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_return std::unexpected(ec.message());
+    }
+    boost::beast::http::response<boost::beast::http::empty_body> res;
+    boost::beast::http::parser<false, boost::beast::http::empty_body> http_parser(res);
+    http_parser.skip(true);
+
+    boost::beast::flat_buffer buffer;
+    std::tie(ec, count) = co_await boost::beast::http::async_read(boost::beast::get_lowest_layer(stream_), buffer,
+                                                                  http_parser, use_nothrow_awaitable);
+    if (boost::beast::http::status::ok != res.result()) {
+        SPDLOG_ERROR("Proxy response failed : {}", res.result_int());
+        co_return std::unexpected(ec.message());
+    }
+    if (!SSL_set_tlsext_host_name(stream_.native_handle(), host.data())) {
+        SPDLOG_ERROR("SSL_set_tlsext_host_name");
+        co_return std::unexpected(std::string("SSL_set_tlsext_host_name"));
+    }
+    std::tie(ec) = co_await stream_.async_handshake(boost::asio::ssl::stream_base::client, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_INFO("async_handshake: {}", ec.message());
+        co_return std::unexpected(ec.message());
+    }
+    co_return stream_;
+}
 
 boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
     BOOST_SCOPE_EXIT(&ch) { ch->close(); }

@@ -30,6 +30,12 @@ inline std::unordered_map<std::string, GptCallback> gpt_function;
 
 #define ADD_METHOD(name, function) gpt_function[name] = std::bind_front(&function, app);
 
+void setEnvironment(auto& cfg) {
+    auto [http_proxy] = getEnv("http_proxy");
+    if (!http_proxy.empty())
+        cfg.http_proxy = std::move(http_proxy);
+}
+
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
     boost::uuids::random_generator gen;
     inja::Environment env;
@@ -179,7 +185,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
             res.body().more = false;
             std::tie(ec, count) = co_await boost::beast::http::async_write(stream, sr, use_nothrow_awaitable);
         } else {
-            SPDLOG_ERROR("bad_request: [{}]", request.target().data());
+            SPDLOG_ERROR("bad_request: [{}]", request.target());
             co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
             co_return;
         }
@@ -213,6 +219,7 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     auto& cfg = config.value();
+    setEnvironment(cfg);
     SPDLOG_INFO("cfg.work_thread_num: {}", cfg.work_thread_num);
     FreeGpt app{cfg};
 
