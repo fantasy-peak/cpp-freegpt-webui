@@ -65,7 +65,7 @@ inline auto getEnv(Args&&... args) {
         auto func = [](std::string_view env_name) {
             const char* env = std::getenv(env_name.data());
             if (env == nullptr)
-                throw std::runtime_error(fmt::format("can't get {} from env", env_name));
+                return std::string{};
             return std::string{env};
         };
         return std::make_tuple(func(std::get<I>(tp))...);
