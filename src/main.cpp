@@ -1,3 +1,5 @@
+#define OPEN_YAML_TO_JSON
+
 #include <experimental/scope>
 #include <format>
 #include <functional>
@@ -31,11 +33,21 @@ inline std::unordered_map<std::string, GptCallback> gpt_function;
 #define ADD_METHOD(name, function) gpt_function[name] = std::bind_front(&function, app);
 
 void setEnvironment(auto& cfg) {
-    if (!cfg.enable_proxy)
-        return;
-    auto [http_proxy] = getEnv("http_proxy");
-    if (!http_proxy.empty())
-        cfg.http_proxy = std::move(http_proxy);
+    if (cfg.enable_proxy) {
+        auto [lower_http_proxy, upper_http_proxy] = getEnv("http_proxy", "HTTP_PROXY");
+        if (!lower_http_proxy.empty())
+            cfg.http_proxy = std::move(lower_http_proxy);
+        if (!upper_http_proxy.empty())
+            cfg.http_proxy = std::move(upper_http_proxy);
+    }
+    if (auto [chat_path] = getEnv("CHAT_PATH"); !chat_path.empty())
+        cfg.chat_path = std::move(chat_path);
+    if (auto [port] = getEnv("PORT"); !port.empty())
+        cfg.port = std::move(port);
+    if (auto [host] = getEnv("HOST"); !host.empty())
+        cfg.host = std::move(host);
+    if (auto [work_thread_num] = getEnv("WORK_THREAD_NUM"); !work_thread_num.empty())
+        cfg.work_thread_num = std::atol(work_thread_num.c_str());
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
@@ -220,8 +232,11 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
     auto& cfg = config.value();
+
     setEnvironment(cfg);
-    SPDLOG_INFO("cfg.work_thread_num: {}", cfg.work_thread_num);
+    auto [yaml_cfg_str, _] = yaml_cpp_struct::to_yaml(cfg);
+    SPDLOG_INFO("{}", yaml_cpp_struct::yaml_to_json(yaml_cfg_str.value()).dump(2));
+
     FreeGpt app{cfg};
 
     ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
