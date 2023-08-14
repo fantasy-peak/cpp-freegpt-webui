@@ -241,8 +241,8 @@ enum class Status : uint8_t {
     HasError,
 };
 
-boost::asio::awaitable<Status> sendRecvChunk(auto& ch, auto& stream_, auto& req, int http_code,
-                                             std::function<void(std::string)> cb) {
+boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, auto& req, int http_code,
+                                                    std::function<void(std::string)> cb) {
     boost::system::error_code err{};
     auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
     if (ec) {
@@ -274,7 +274,8 @@ boost::asio::awaitable<Status> sendRecvChunk(auto& ch, auto& stream_, auto& req,
     if (result_int != http_code) {
         std::string reason{headers.reason()};
         SPDLOG_ERROR("reason: {}", reason);
-        co_await ch->async_send(err, std::move(reason), use_nothrow_awaitable);
+        co_await ch->async_send(err, std::format("return unexpected http status code: {}({})", result_int, reason),
+                                use_nothrow_awaitable);
         co_return Status::HasError;
     }
 
@@ -337,6 +338,44 @@ std::expected<std::string, std::string> decompress(auto& res) {
     } catch (const std::exception& e) {
         return std::unexpected(e.what());
     }
+}
+
+boost::asio::awaitable<
+    std::expected<std::tuple<boost::beast::http::response<boost::beast::http::string_body>, boost::asio::ssl::context,
+                             boost::beast::ssl_stream<boost::beast::tcp_stream>>,
+                  std::string>>
+sendRequestRecvResponse(auto& req, std::string_view host, std::string_view port, auto create_http_client) {
+    int recreate_num{0};
+create_client:
+    SPDLOG_INFO("create new client");
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await create_http_client(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_return std::unexpected(client.error());
+    }
+    auto& stream_ = client.value();
+
+    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_return std::unexpected(ec.message());
+    }
+    boost::beast::flat_buffer b;
+    boost::beast::http::response<boost::beast::http::string_body> res;
+    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
+    if (ec == boost::beast::http::error::end_of_stream) {
+        if (recreate_num == 0) {
+            recreate_num++;
+            goto create_client;
+        }
+    }
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_return std::unexpected(ec.message());
+    }
+    co_return std::make_tuple(res, std::move(ctx), std::move(stream_));
 }
 
 }  // namespace
@@ -497,7 +536,7 @@ create_client:
     auto& stream_ = client.value();
 
     std::string recv;
-    auto ret = co_await sendRecvChunk(ch, stream_, req, 201, [&ch, &recv](std::string chunk_str) {
+    auto ret = co_await sendRequestRecvChunk(ch, stream_, req, 201, [&ch, &recv](std::string chunk_str) {
         recv.append(chunk_str);
         while (true) {
             auto position = recv.find("\n");
@@ -580,7 +619,7 @@ create_client:
     }
     auto& stream_ = client.value();
 
-    auto ret = co_await sendRecvChunk(ch, stream_, req, 200, [&ch](std::string recv_str) {
+    auto ret = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string recv_str) {
         boost::system::error_code ec{};
         ch->try_send(ec, recv_str);
     });
@@ -712,44 +751,18 @@ boost::asio::awaitable<void> FreeGpt::aiChat(std::shared_ptr<Channel> ch, nlohma
     req.body() = data.dump();
     req.prepare_payload();
 
-    int recreate_num{0};
-create_client:
-    SPDLOG_INFO("create new client");
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
         co_return;
     }
-    auto& stream_ = client.value();
-
-    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
-    boost::beast::flat_buffer b;
-    boost::beast::http::response<boost::beast::http::string_body> res;
-    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
-    if (ec == boost::beast::http::error::end_of_stream) {
-        if (recreate_num == 0) {
-            recreate_num++;
-            goto create_client;
-        }
-    }
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
+    auto& [res, ctx, stream_] = ret.value();
     if (boost::beast::http::status::ok != res.result()) {
-        SPDLOG_ERROR("http code: {}", res.result_int());
+        SPDLOG_ERROR("http status code: {}", res.result_int());
         co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
         co_return;
     }
+
     nlohmann::json rsp = nlohmann::json::parse(res.body(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
@@ -790,7 +803,7 @@ create_client:
     auto& stream_ = client.value();
 
     std::string chunk_body;
-    auto ret = co_await sendRecvChunk(
+    auto ret = co_await sendRequestRecvChunk(
         ch, stream_, req, 200, [&ch, &chunk_body](std::string recv_str) { chunk_body.append(std::move(recv_str)); });
     if (ret == Status::Close && recreate_num == 0) {
         recreate_num++;
@@ -960,7 +973,7 @@ create_client:
     auto& stream_ = client.value();
 
     std::string recv;
-    auto ret = co_await sendRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
+    auto ret = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
         recv.append(chunk_str);
         while (true) {
             auto position = recv.find("\n");
@@ -1013,44 +1026,18 @@ boost::asio::awaitable<void> FreeGpt::aiService(std::shared_ptr<Channel> ch, nlo
     req.body() = data.dump();
     req.prepare_payload();
 
-    int recreate_num{0};
-create_client:
-    SPDLOG_INFO("create new client");
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
         co_return;
     }
-    auto& stream_ = client.value();
-
-    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
-    boost::beast::flat_buffer b;
-    boost::beast::http::response<boost::beast::http::string_body> res;
-    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
-    if (ec == boost::beast::http::error::end_of_stream) {
-        if (recreate_num == 0) {
-            recreate_num++;
-            goto create_client;
-        }
-    }
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
+    auto& [res, ctx, stream_] = ret.value();
     if (boost::beast::http::status::ok != res.result()) {
-        SPDLOG_ERROR("http code: {}", res.result_int());
+        SPDLOG_ERROR("http status code: {}", res.result_int());
         co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
         co_return;
     }
+
     nlohmann::json rsp = nlohmann::json::parse(res.body(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
@@ -1144,44 +1131,18 @@ boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nloh
     req.body() = request.dump();
     req.prepare_payload();
 
-    int recreate_num{0};
-create_client:
-    SPDLOG_INFO("create new client");
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
         co_return;
     }
-    auto& stream_ = client.value();
-
-    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
-    boost::beast::flat_buffer b;
-    boost::beast::http::response<boost::beast::http::string_body> res;
-    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
-    if (ec == boost::beast::http::error::end_of_stream) {
-        if (recreate_num == 0) {
-            recreate_num++;
-            goto create_client;
-        }
-    }
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
+    auto& [res, ctx, stream_] = ret.value();
     if (boost::beast::http::status::ok != res.result()) {
-        SPDLOG_ERROR("http code: {}", res.result_int());
+        SPDLOG_ERROR("http status code: {}", res.result_int());
         co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
         co_return;
     }
+
     nlohmann::json rsp = nlohmann::json::parse(res.body(), nullptr, false);
     if (rsp.is_discarded()) {
         SPDLOG_ERROR("json parse error");
@@ -1242,44 +1203,18 @@ boost::asio::awaitable<void> FreeGpt::opChatGpts(std::shared_ptr<Channel> ch, nl
     req.body() = request.dump();
     req.prepare_payload();
 
-    int recreate_num{0};
-create_client:
-    SPDLOG_INFO("create new client");
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
         co_return;
     }
-    auto& stream_ = client.value();
-
-    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
-    boost::beast::flat_buffer b;
-    boost::beast::http::response<boost::beast::http::string_body> res;
-    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
-    if (ec == boost::beast::http::error::end_of_stream) {
-        if (recreate_num == 0) {
-            recreate_num++;
-            goto create_client;
-        }
-    }
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
+    auto& [res, ctx, stream_] = ret.value();
     if (boost::beast::http::status::ok != res.result()) {
-        SPDLOG_ERROR("http code: {}", res.result_int());
+        SPDLOG_ERROR("http status code: {}", res.result_int());
         co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
         co_return;
     }
+
     auto decompress_value = decompress(res);
     if (!decompress_value.has_value()) {
         SPDLOG_ERROR("decompress error");
@@ -1337,7 +1272,7 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         }
         auto& stream_ = client.value();
 
-        auto ret = co_await sendRecvChunk(ch, stream_, req_init_cookie, 200, [&ch](std::string) {});
+        auto ret = co_await sendRequestRecvChunk(ch, stream_, req_init_cookie, 200, [&ch](std::string) {});
         if (ret == Status::HasError)
             continue;
 
@@ -1379,7 +1314,7 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         req.prepare_payload();
 
         std::string recv;
-        co_await sendRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
+        co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
             recv.append(chunk_str);
             while (true) {
                 auto position = recv.find("\n");
