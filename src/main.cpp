@@ -48,6 +48,11 @@ void setEnvironment(auto& cfg) {
         cfg.host = std::move(host);
     if (auto [work_thread_num] = getEnv("WORK_THREAD_NUM"); !work_thread_num.empty())
         cfg.work_thread_num = std::atol(work_thread_num.c_str());
+    if (auto [providers] = getEnv("PROVIDERS"); !providers.empty()) {
+        nlohmann::json providers_list = nlohmann::json::parse(providers, nullptr, false);
+        if (!providers_list.is_discarded())
+            cfg.providers = providers_list.get<std::vector<std::string>>();
+    }
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {

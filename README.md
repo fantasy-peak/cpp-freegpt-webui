@@ -46,6 +46,9 @@ docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
 docker run -p 8858:8858 -it --name freegpt fantasypeak/freegpt:latest
 // use http_proxy
 docker run -p 8858:8858 -it --name freegpt -e HTTP_PROXY=http://127.0.0.1:8080 -e CHAT_PATH=/chat fantasypeak/freegpt:latest
+// set active providers
+docker run -p 8858:8858 -it --name freegpt -e CHAT_PATH=/chat -e PROVIDERS="[\"gpt-4-ChatgptAi\",\"gpt-3.5-turbo-stream-DeepAi\"]" fantasypeak/freegpt:latest
+
 ```
 
 ### WebUI
