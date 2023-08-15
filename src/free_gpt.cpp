@@ -1341,3 +1341,68 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         co_return;
     }
 }
+
+boost::asio::awaitable<void> FreeGpt::acytoo(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "chat.acytoo.com";
+    constexpr std::string_view port = "443";
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/api/completions", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set("Accept", "*/*");
+    req.set("Accept-Encoding", "gzip, deflate");
+    req.set(boost::beast::http::field::content_type, "application/json");
+
+    constexpr std::string_view json_str = R"({
+        "key":"",
+        "model":"gpt-3.5-turbo",
+        "messages":[
+            {
+                "role":"user",
+                "content":"user: hello\nassistant:",
+                "createdAt":1688518523500
+            }
+        ],
+        "temperature":1,
+        "password":""
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    request["messages"][0]["content"] = std::format("user: {}\nassistant:", prompt);
+    auto time_now = std::chrono::system_clock::now();
+    auto duration_in_ms = std::chrono::duration_cast<std::chrono::milliseconds>(time_now.time_since_epoch());
+    request["messages"][0]["createdAt"] = duration_in_ms.count();
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& [res, ctx, stream_] = ret.value();
+    if (boost::beast::http::status::ok != res.result()) {
+        SPDLOG_ERROR("http status code: {}", res.result_int());
+        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto decompress_value = decompress(res);
+    if (!decompress_value.has_value()) {
+        SPDLOG_ERROR("decompress error");
+        co_await ch->async_send(err, decompress_value.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& body = decompress_value.value();
+    co_await ch->async_send(err, std::move(body), use_nothrow_awaitable);
+    co_return;
+}
