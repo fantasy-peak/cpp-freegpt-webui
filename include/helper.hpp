@@ -72,3 +72,22 @@ inline auto getEnv(Args&&... args) {
     };
     return impl(std::forward_as_tuple(args...), std::index_sequence_for<Args...>{});
 }
+
+class ScopeExit {
+public:
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+
+    template <typename Callable>
+    explicit ScopeExit(Callable&& call) : m_call(std::forward<Callable>(call)) {}
+
+    ~ScopeExit() {
+        if (m_call)
+            m_call();
+    }
+
+    void clear() { m_call = decltype(m_call)(); }
+
+private:
+    std::function<void()> m_call;
+};
