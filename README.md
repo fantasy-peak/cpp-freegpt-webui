@@ -8,7 +8,7 @@ This project features a WebUI utilizing the [G4F API](https://github.com/xtekky/
 Experience the power of ChatGPT with a user-friendly interface, enhanced jailbreaks, and completely free.
 
 ## Getting Started :white_check_mark:  
-To get started with this project, you'll need to clone the repository and have g++ >= 11.2 installed on your system.  
+To get started with this project, you'll need to clone the repository and have g++ >= 13.1 installed on your system.
   
 ### Cloning the Repository :inbox_tray:
 Run the following command to clone the repository:  
