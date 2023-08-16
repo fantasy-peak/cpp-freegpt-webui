@@ -1,6 +1,5 @@
 #define OPEN_YAML_TO_JSON
 
-#include <experimental/scope>
 #include <format>
 #include <functional>
 #include <semaphore>
@@ -84,7 +83,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                                           boost::asio::io_context& context) {
     boost::beast::tcp_stream stream{std::move(sock)};
     using namespace boost::asio::experimental::awaitable_operators;
-    std::experimental::scope_exit auto_exit{[&stream] {
+    ScopeExit auto_exit{[&stream] {
         boost::beast::error_code ec;
         stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     }};

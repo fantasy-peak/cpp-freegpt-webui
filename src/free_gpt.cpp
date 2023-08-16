@@ -1,5 +1,4 @@
 #include <chrono>
-#include <experimental/scope>
 #include <format>
 #include <iostream>
 #include <random>
@@ -21,6 +20,7 @@
 #include <plusaes/plusaes.hpp>
 
 #include "free_gpt.h"
+#include "helper.hpp"
 
 constexpr auto use_nothrow_awaitable = boost::asio::as_tuple(boost::asio::use_awaitable);
 
@@ -482,7 +482,7 @@ FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host,
 }
 
 boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     constexpr std::string_view host{"chat.getgpt.world"};
@@ -568,7 +568,7 @@ create_client:
 }
 
 boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     std::string user_agent{
@@ -631,7 +631,7 @@ create_client:
 }
 
 boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
@@ -715,7 +715,7 @@ create_client:
 }
 
 boost::asio::awaitable<void> FreeGpt::aiChat(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
@@ -775,7 +775,7 @@ boost::asio::awaitable<void> FreeGpt::aiChat(std::shared_ptr<Channel> ch, nlohma
 }
 
 boost::asio::awaitable<void> FreeGpt::chatGptAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     constexpr std::string_view host = "chatgpt.ai";
@@ -914,7 +914,7 @@ create_client:
 }
 
 boost::asio::awaitable<void> FreeGpt::chatFree(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     std::string user_agent{
@@ -1005,7 +1005,7 @@ create_client:
 }
 
 boost::asio::awaitable<void> FreeGpt::aiService(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
@@ -1049,7 +1049,7 @@ boost::asio::awaitable<void> FreeGpt::aiService(std::shared_ptr<Channel> ch, nlo
 }
 
 boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
     boost::system::error_code err{};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
@@ -1160,7 +1160,7 @@ boost::asio::awaitable<void> FreeGpt::weWordle(std::shared_ptr<Channel> ch, nloh
 
 boost::asio::awaitable<void> FreeGpt::opChatGpts(std::shared_ptr<Channel> ch, nlohmann::json json) {
     boost::system::error_code err{};
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
@@ -1239,7 +1239,7 @@ boost::asio::awaitable<void> FreeGpt::opChatGpts(std::shared_ptr<Channel> ch, nl
 
 boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nlohmann::json json) {
     boost::system::error_code err{};
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
@@ -1344,7 +1344,7 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
 
 boost::asio::awaitable<void> FreeGpt::acytoo(std::shared_ptr<Channel> ch, nlohmann::json json) {
     boost::system::error_code err{};
-    std::experimental::scope_exit auto_exit{[&] { ch->close(); }};
+    ScopeExit auto_exit{[&] { ch->close(); }};
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
