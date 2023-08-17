@@ -1244,8 +1244,8 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     static std::vector<std::string> active_servers{
-        "chat10.fastgpt.me", "chat9.fastgpt.me", "chat1.fastgpt.me",
-        "chat2.fastgpt.me",  "chat3.fastgpt.me", "chat4.fastgpt.me",
+        "chat3.fastgpt.me", "chat4.fastgpt.me", "chat10.fastgpt.me",
+        "chat9.fastgpt.me", "chat1.fastgpt.me", "chat2.fastgpt.me",
     };
     constexpr std::string_view port = "443";
 
@@ -1253,6 +1253,7 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         R"(Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
 
     for (auto& server : active_servers) {
+        SPDLOG_INFO("server: {}", server);
         boost::beast::http::request<boost::beast::http::empty_body> req_init_cookie{boost::beast::http::verb::get, "/",
                                                                                     11};
         req_init_cookie.set(boost::beast::http::field::host, server);
@@ -1273,8 +1274,10 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         auto& stream_ = client.value();
 
         auto ret = co_await sendRequestRecvChunk(ch, stream_, req_init_cookie, 200, [&ch](std::string) {});
-        if (ret == Status::HasError)
+        if (ret == Status::HasError) {
+            co_await timeout(std::chrono::seconds(2));
             continue;
+        }
 
         boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
                                                                          "/api/openai/v1/chat/completions", 11};
@@ -1314,7 +1317,7 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         req.prepare_payload();
 
         std::string recv;
-        co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
+        auto result = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
             recv.append(chunk_str);
             while (true) {
                 auto position = recv.find("\n");
@@ -1338,6 +1341,10 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
                     ch->try_send(err, str);
             }
         });
+        if (result == Status::HasError) {
+            co_await timeout(std::chrono::seconds(2));
+            continue;
+        }
         co_return;
     }
 }
@@ -1404,5 +1411,82 @@ boost::asio::awaitable<void> FreeGpt::acytoo(std::shared_ptr<Channel> ch, nlohma
     }
     auto& body = decompress_value.value();
     co_await ch->async_send(err, std::move(body), use_nothrow_awaitable);
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::openAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "api.openai.com";
+    constexpr std::string_view port = "443";
+
+    constexpr std::string_view user_agent{
+        R"(Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
+
+    SPDLOG_INFO("create new client");
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/v1/chat/completions", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(boost::beast::http::field::user_agent, user_agent);
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set(boost::beast::http::field::authorization, std::format("Bearer {}", m_cfg.api_key));
+
+    constexpr std::string_view json_str = R"({
+        "messages": [
+            {
+                "role": "user",
+                "content": "hello"
+            }
+        ],
+        "stream": true,
+        "model": "gpt-3.5-turbo"
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    request["messages"][0]["content"] = prompt;
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    std::string recv;
+    co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
+        recv.append(chunk_str);
+        while (true) {
+            auto position = recv.find("\n");
+            if (position == std::string::npos)
+                break;
+            auto msg = recv.substr(0, position + 1);
+            recv.erase(0, position + 1);
+            msg.pop_back();
+            if (msg.empty() || !msg.contains("content"))
+                continue;
+            auto fields = splitString(msg, "data: ");
+            boost::system::error_code err{};
+            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                continue;
+            }
+            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+            if (!str.empty())
+                ch->try_send(err, str);
+        }
+    });
     co_return;
 }
