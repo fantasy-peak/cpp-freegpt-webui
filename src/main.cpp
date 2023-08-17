@@ -52,6 +52,8 @@ void setEnvironment(auto& cfg) {
         if (!providers_list.is_discarded())
             cfg.providers = providers_list.get<std::vector<std::string>>();
     }
+    if (auto [api_key] = getEnv("API_KEY"); !api_key.empty())
+        cfg.api_key = std::move(api_key);
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
@@ -254,6 +256,8 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-EasyChat", FreeGpt::easyChat);
     ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
+    if (!cfg.api_key.empty())
+        ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();

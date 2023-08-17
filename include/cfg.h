@@ -12,6 +12,7 @@ struct Config {
     std::vector<std::string> providers;
     bool enable_proxy;
     std::string http_proxy;
+    std::string api_key;
 };
 YCS_ADD_STRUCT(Config, client_root_path, interval, work_thread_num, host, port, chat_path, providers, enable_proxy,
-               http_proxy)
+               http_proxy, api_key)
