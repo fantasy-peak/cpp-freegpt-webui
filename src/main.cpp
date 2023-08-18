@@ -257,6 +257,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
     ADD_METHOD("gpt-3.5-turbo-stream-H2o", FreeGpt::h2o);
+    ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
     if (!cfg.api_key.empty())
         ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
 
