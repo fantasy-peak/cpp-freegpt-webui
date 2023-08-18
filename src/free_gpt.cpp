@@ -241,6 +241,24 @@ enum class Status : uint8_t {
     HasError,
 };
 
+void printHttpHeader(auto& http_packet) {
+    std::stringstream ss;
+    ss << http_packet.base();
+    SPDLOG_INFO("\n{}", ss.str());
+}
+
+std::optional<std::smatch> parse(const std::string& url) {
+    static const auto url_regex =
+        std::regex(R"regex((http|https)://([^/ :]+):?([^/ ]*)((/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)))regex",
+                   std::regex_constants::icase | std::regex_constants::optimize);
+    auto match = std::smatch();
+    if (!std::regex_match(url, match, url_regex)) {
+        SPDLOG_ERROR("invalid http_proxy: {}", url);
+        return std::nullopt;
+    }
+    return match;
+}
+
 boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, auto& req, int http_code,
                                                     std::function<void(std::string)> cb) {
     boost::system::error_code err{};
@@ -265,15 +283,12 @@ boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, aut
     }
 
     auto& headers = p.get();
-    std::stringstream ss;
-    ss << headers.base();
-    SPDLOG_INFO("{}", ss.str());
-    // boost::beast::http::status result = headers.result();
-    int result_int = headers.result_int();
-    SPDLOG_INFO("code: {}", result_int);
+    printHttpHeader(headers);
+
+    auto result_int = headers.result_int();
     if (result_int != http_code) {
         std::string reason{headers.reason()};
-        SPDLOG_ERROR("reason: {}", reason);
+        SPDLOG_ERROR("http response code: {}, reason: {}", headers.result_int(), reason);
         co_await ch->async_send(err, std::format("return unexpected http status code: {}({})", result_int, reason),
                                 use_nothrow_awaitable);
         co_return Status::HasError;
@@ -347,7 +362,6 @@ boost::asio::awaitable<
 sendRequestRecvResponse(auto& req, std::string_view host, std::string_view port, auto create_http_client) {
     int recreate_num{0};
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await create_http_client(ctx, host, port);
@@ -417,21 +431,17 @@ FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host,
         co_return stream_;
     }
 
-    SPDLOG_INFO("http_proxy: [{}]", m_cfg.http_proxy);
-    static const auto url_regex =
-        std::regex(R"regex((http|https)://([^/ :]+):?([^/ ]*)((/?[^ #?]*)\x3f?([^ #]*)#?([^ ]*)))regex",
-                   std::regex_constants::icase | std::regex_constants::optimize);
-    auto match = std::smatch();
-    if (!std::regex_match(m_cfg.http_proxy, match, url_regex)) {
-        SPDLOG_ERROR("invalid http_proxy: {}", m_cfg.http_proxy);
-        co_return std::unexpected("invalid http_proxy");
-    }
+    auto match_opt = parse(m_cfg.http_proxy);
+    if (!match_opt.has_value())
+        co_return std::unexpected(std::format("invalid http_proxy: {}", m_cfg.http_proxy));
+    auto& match = match_opt.value();
+
     // auto& protocol = match[1];
     // auto& target = match[4];
     std::string_view proxy_host{m_cfg.http_proxy.data() + match.position(2), static_cast<uint64_t>(match.length(2))};
     std::string_view proxy_port{m_cfg.http_proxy.data() + match.position(3), static_cast<uint64_t>(match.length(3))};
 
-    SPDLOG_INFO("proxy host: [{}], port: [{}]", proxy_host, proxy_port);
+    SPDLOG_INFO("CONNECT TO HTTP_PROXY [{}:{}]", proxy_host, proxy_port);
 
     auto resolver = boost::asio::ip::tcp::resolver(co_await boost::asio::this_coro::executor);
     auto [ec, results] = co_await resolver.async_resolve(proxy_host, proxy_port, use_nothrow_awaitable);
@@ -518,13 +528,13 @@ boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohma
     request["signature"] = encrypt(data.dump());
     req.body() = request.dump();
     req.prepare_payload();
+
     std::stringstream ss;
     ss << req;
     SPDLOG_INFO("request:\n{}", ss.str());
 
     int recreate_num{0};
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await createHttpClient(ctx, host, port);
@@ -608,7 +618,6 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
 
     int recreate_num{0};
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await createHttpClient(ctx, host, port);
@@ -660,7 +669,6 @@ boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nloh
 
     int recreate_num{0};
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await createHttpClient(ctx, host, port);
@@ -791,7 +799,6 @@ boost::asio::awaitable<void> FreeGpt::chatGptAi(std::shared_ptr<Channel> ch, nlo
 
     int recreate_num{0};
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await createHttpClient(ctx, host, port);
@@ -961,7 +968,6 @@ boost::asio::awaitable<void> FreeGpt::chatFree(std::shared_ptr<Channel> ch, nloh
     int recreate_num{0};
 
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await createHttpClient(ctx, host, port);
@@ -1261,7 +1267,6 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         req_init_cookie.set("Accept", "*/*");
         req_init_cookie.set("Accept-Encoding", "gzip, deflate");
 
-        SPDLOG_INFO("create new client");
         boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
         ctx.set_verify_mode(boost::asio::ssl::verify_none);
 
@@ -1426,7 +1431,6 @@ boost::asio::awaitable<void> FreeGpt::openAi(std::shared_ptr<Channel> ch, nlohma
     constexpr std::string_view user_agent{
         R"(Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
 
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
 
@@ -1785,7 +1789,6 @@ boost::asio::awaitable<void> FreeGpt::v50(std::shared_ptr<Channel> ch, nlohmann:
 
     int recreate_num{0};
 create_client:
-    SPDLOG_INFO("create new client");
     boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
     ctx.set_verify_mode(boost::asio::ssl::verify_none);
     auto client = co_await createHttpClient(ctx, host, port);
