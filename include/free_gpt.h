@@ -30,6 +30,7 @@ public:
     boost::asio::awaitable<void> acytoo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> openAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> h2o(std::shared_ptr<Channel> ch, nlohmann::json json);
+    boost::asio::awaitable<void> v50(std::shared_ptr<Channel> ch, nlohmann::json json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
