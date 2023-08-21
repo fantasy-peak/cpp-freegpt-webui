@@ -1809,3 +1809,61 @@ create_client:
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::yqcloud(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "api.aichatos.cloud";
+    constexpr std::string_view port = "443";
+
+    constexpr std::string_view user_agent{
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0)"};
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/api/generateStream", 11};
+    req.set("authority", "p5.v50.ltd");
+    req.set(boost::beast::http::field::host, host);
+    req.set(boost::beast::http::field::user_agent, user_agent);
+    req.set("accept", "application/json, text/plain, */*");
+    req.set("Content-Type", "application/json");
+    req.set("origin", "https://chat9.yqcloud.top");
+
+    constexpr std::string_view json_str = R"({
+        "prompt":"hello",
+        "network":true,
+        "system":"",
+        "withoutContext":false,
+        "stream":false
+    })";
+
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+    request["prompt"] = std::move(prompt);
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    int recreate_num{0};
+create_client:
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    auto ret = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string str) {
+        boost::system::error_code err{};
+        ch->try_send(err, std::move(str));
+    });
+    if (ret == Status::Close && recreate_num == 0) {
+        recreate_num++;
+        goto create_client;
+    }
+    co_return;
+}
