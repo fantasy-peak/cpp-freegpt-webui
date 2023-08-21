@@ -1250,13 +1250,13 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     static std::vector<std::string> active_servers{
-        "chat3.fastgpt.me", "chat4.fastgpt.me", "chat10.fastgpt.me",
-        "chat9.fastgpt.me", "chat1.fastgpt.me", "chat2.fastgpt.me",
+        "gxos1h1ddt.fastgpt.me", "chat3.fastgpt.me", "chat4.fastgpt.me", "chat10.fastgpt.me",
+        "chat9.fastgpt.me",      "chat1.fastgpt.me", "chat2.fastgpt.me",
     };
     constexpr std::string_view port = "443";
 
     constexpr std::string_view user_agent{
-        R"(Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36)"};
 
     for (auto& server : active_servers) {
         SPDLOG_INFO("server: {}", server);
@@ -1295,8 +1295,16 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
         req.set("Accept-Encoding", "gzip, deflate");
         req.set("origin", server);
         req.set("referer", server);
-        req.set("sec-ch-ua", R"("Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114")");
+        req.set("sec-ch-ua", R"("Chromium";v="116", "Not)A;Brand";v="24", "Google Chrome";v="116")");
         req.set(boost::beast::http::field::content_type, "application/json");
+        req.set("x-requested-with", "XMLHttpRequest");
+        req.set("plugins", "0");
+        req.set("sec-ch-ua-mobile", "?0");
+        req.set("sec-ch-ua-platform", "Windows");
+        req.set("sec-fetch-dest", "empty");
+        req.set("sec-fetch-mode", "cors");
+        req.set("sec-fetch-site", "same-origin");
+        req.set("usesearch", "false");
         req.set("x-requested-with", "XMLHttpRequest");
 
         constexpr std::string_view json_str = R"({
@@ -1333,7 +1341,7 @@ boost::asio::awaitable<void> FreeGpt::easyChat(std::shared_ptr<Channel> ch, nloh
                 msg.pop_back();
                 if (msg.empty() || !msg.contains("content"))
                     continue;
-                auto fields = splitString(msg, "data: ");
+                auto fields = splitString(msg, "data:");
                 boost::system::error_code err{};
                 nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
                 if (line_json.is_discarded()) {
