@@ -11,12 +11,14 @@ add_requires("boost", {configs = {iostreams = true}})
 
 set_languages("c++23")
 set_policy("check.auto_ignore_flags", false)
-add_cxflags("-O2 -Wall -Wextra -pedantic-errors -Wno-missing-field-initializers -Wno-ignored-qualifiers")
+-- add_cxflags("-O2 -Wall -g -fno-omit-frame-pointer -fsanitize=address -Wextra -pedantic-errors -Wno-missing-field-initializers -Wno-ignored-qualifiers")
+add_cxflags("-O2 -Wall -g -Wextra -pedantic-errors -Wno-missing-field-initializers -Wno-ignored-qualifiers")
+
 add_includedirs("include")
 
 target("cpp-freegpt-webui")
     set_kind("binary")
     add_files("src/*.cpp")
     add_packages("openssl", "yaml_cpp_struct", "nlohmann_json", "spdlog", "boost", "inja", "plusaes", "zlib")
-    add_syslinks("pthread")
+    add_syslinks("pthread", "asan")
 target_end()

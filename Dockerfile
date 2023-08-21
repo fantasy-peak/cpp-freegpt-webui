@@ -1,7 +1,7 @@
 FROM ubuntu:23.04
 
 RUN apt-get update -y
-RUN apt-get install -y valgrind
+RUN apt-get install -y valgrind libasan8
 # RUN strings /lib/x86_64-linux-gnu/libstdc++.so.6 | grep GLIBCXX_3.4
 
 WORKDIR /app
@@ -15,4 +15,4 @@ RUN ls /app/cfg
 
 WORKDIR /app/bin
 
-ENTRYPOINT ["sh", "-c", "valgrind --tool=memcheck --leak-check=full -s  --track-origins=yes ./cpp-freegpt-webui ../cfg/cpp-free-gpt.yml"]
+# ENTRYPOINT ["sh", "-c", "LD_PRELOAD=/lib/x86_64-linux-gnu/libasan.so.8 ./cpp-freegpt-webui ../cfg/cpp-free-gpt.yml"]
