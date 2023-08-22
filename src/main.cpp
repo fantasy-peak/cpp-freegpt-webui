@@ -254,7 +254,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-weWordle", FreeGpt::weWordle);
     // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
-    // ADD_METHOD("gpt-3.5-turbo-acytoo", FreeGpt::acytoo);
+    ADD_METHOD("gpt-3.5-turbo-acytoo", FreeGpt::acytoo);
     ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);
     // ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
     ADD_METHOD("gpt-3.5-turbo-stream-EasyChat", FreeGpt::easyChat);
