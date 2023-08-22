@@ -751,7 +751,7 @@ boost::asio::awaitable<void> FreeGpt::aiChat(std::shared_ptr<Channel> ch, nlohma
 
     nlohmann::json data{
         {"message", std::format("user: {}\nassistant:", prompt)},
-        {"temperature", 1},
+        {"temperature", 0.5},
         {"presence_penalty", 0},
         {"top_p", 1},
         {"frequency_penalty", 0},
@@ -1391,7 +1391,7 @@ boost::asio::awaitable<void> FreeGpt::acytoo(std::shared_ptr<Channel> ch, nlohma
                 "createdAt":1688518523500
             }
         ],
-        "temperature":1,
+        "temperature":0.5,
         "password":""
     })";
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
