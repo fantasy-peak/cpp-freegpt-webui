@@ -176,7 +176,11 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
             }
             if (!gpt_function.contains(model)) {
                 SPDLOG_ERROR("Invalid request model: {}", model);
-                co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
+                static std::string reject{"Invalid request model"};
+                res.body().data = reject.data();
+                res.body().size = reject.size();
+                res.body().more = false;
+                std::tie(ec, count) = co_await boost::beast::http::async_write(stream, sr, use_nothrow_awaitable);
                 co_return;
             }
             auto ch = std::make_shared<FreeGpt::Channel>(co_await boost::asio::this_coro::executor, 4096);
@@ -185,7 +189,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                 context,
                 [](auto ch, auto model, auto request_body) -> boost::asio::awaitable<void> {
                     auto& func = gpt_function[model];
-                    co_await func(ch, std::move(request_body));
+                    co_await func(std::move(ch), std::move(request_body));
                     co_return;
                 }(ch, std::move(model), std::move(request_body)),
                 boost::asio::detached);
