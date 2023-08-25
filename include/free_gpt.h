@@ -3,7 +3,7 @@
 #include <expected>
 #include <memory>
 
-#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/channel.hpp>
 #include <boost/beast.hpp>
 #include <boost/beast/ssl.hpp>
@@ -32,6 +32,7 @@ public:
     boost::asio::awaitable<void> h2o(std::shared_ptr<Channel> ch, nlohmann::json json);
     boost::asio::awaitable<void> v50(std::shared_ptr<Channel> ch, nlohmann::json json);
     boost::asio::awaitable<void> yqcloud(std::shared_ptr<Channel> ch, nlohmann::json json);
+    boost::asio::awaitable<void> wuguokai(std::shared_ptr<Channel> ch, nlohmann::json json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>

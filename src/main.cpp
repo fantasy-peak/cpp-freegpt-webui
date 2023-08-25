@@ -192,7 +192,14 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                     co_await func(std::move(ch), std::move(request_body));
                     co_return;
                 }(ch, std::move(model), std::move(request_body)),
-                boost::asio::detached);
+                [](std::exception_ptr eptr) {
+                    try {
+                        if (eptr)
+                            std::rethrow_exception(eptr);
+                    } catch (const std::exception& e) {
+                        SPDLOG_ERROR("Caught exception: {}", e.what());
+                    }
+                });
 
             while (true) {
                 auto [ec, str] = co_await ch->async_receive(use_nothrow_awaitable);
@@ -249,6 +256,7 @@ int main(int argc, char** argv) {
 
     FreeGpt app{cfg};
 
+    ADD_METHOD("gpt-3.5-turbo-Wuguokai", FreeGpt::wuguokai);
     ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
     ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);

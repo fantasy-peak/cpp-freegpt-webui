@@ -1875,3 +1875,78 @@ create_client:
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::wuguokai(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "ai-api20.wuguokai.xyz";
+    constexpr std::string_view port = "443";
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/api/chat-process", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set("authority", "ai-api.wuguokai.xyz");
+    req.set("Accept", "application/json, text/plain, */*");
+    req.set("accept-language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7");
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("origin", "https://chat.wuguokai.xyz");
+    req.set("referer", "https://chat.wuguokai.xyz/");
+    req.set("sec-ch-ua", R"("Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114")");
+    req.set("sec-ch-ua-mobile", "?0");
+    req.set("sec-ch-ua-platform", R"("Windows")");
+    req.set("sec-fetch-dest", "empty");
+    req.set("sec-fetch-mode", "cors");
+    req.set("sec-fetch-site", "same-site");
+    req.set("Accept-Encoding", "gzip, deflate");
+
+    constexpr std::string_view json_str = R"({
+        "prompt":"user: hello\nassistant:",
+        "options":{
+        },
+        "userId":"#/chat/74627487",
+        "usingContext":true
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    auto get_chat_id = [] -> int64_t {
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(1, 99999999);
+        int random_num = dis(gen);
+        return random_num;
+    };
+
+    request["prompt"] = std::format("user: {}\nassistant:", prompt);
+    request["userId"] = std::format("#/chat/{}", get_chat_id());
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& [res, ctx, stream_] = ret.value();
+    if (boost::beast::http::status::ok != res.result()) {
+        SPDLOG_ERROR("http status code: {}", res.result_int());
+        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto decompress_value = decompress(res);
+    if (!decompress_value.has_value()) {
+        SPDLOG_ERROR("decompress error");
+        co_await ch->async_send(err, decompress_value.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& body = decompress_value.value();
+    co_await ch->async_send(err, std::move(body), use_nothrow_awaitable);
+    co_return;
+}
