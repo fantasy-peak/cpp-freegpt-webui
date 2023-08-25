@@ -55,7 +55,7 @@ inline boost::asio::awaitable<void> timeout(std::chrono::seconds duration) {
     auto now = std::chrono::steady_clock::now() + duration;
     boost::asio::steady_timer timer(co_await boost::asio::this_coro::executor);
     timer.expires_at(now);
-    auto [ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
+    [[maybe_unused]] auto [ec] = co_await timer.async_wait(boost::asio::as_tuple(boost::asio::use_awaitable));
     co_return;
 }
 
