@@ -14,15 +14,10 @@
 #include <boost/iostreams/filter/gzip.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/stream.hpp>
-#include <boost/uuid/uuid.hpp>
-#include <boost/uuid/uuid_generators.hpp>
-#include <boost/uuid/uuid_io.hpp>
 #include <plusaes/plusaes.hpp>
 
 #include "free_gpt.h"
 #include "helper.hpp"
-
-constexpr auto use_nothrow_awaitable = boost::asio::as_tuple(boost::asio::use_awaitable);
 
 namespace {
 
@@ -510,7 +505,6 @@ boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohma
     req.set("Accept-Encoding", "gzip, deflate");
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-    boost::uuids::random_generator gen;
     nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
     nlohmann::json data{
         {"messages", std::move(request_json)},
@@ -521,7 +515,7 @@ boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohma
         {"temperature", 1},
         {"top_p", 1},
         {"stream", true},
-        {"uuid", boost::uuids::to_string(gen())},
+        {"uuid", createUuidString()},
     };
 
     nlohmann::json request;
@@ -1701,8 +1695,7 @@ boost::asio::awaitable<void> FreeGpt::h2o(std::shared_ptr<Channel> ch, nlohmann:
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
     request["inputs"] = std::format("user: {}\nassistant: ", prompt);
     request["response_id"] = conversation_id;
-    boost::uuids::random_generator gen;
-    request["id"] = boost::uuids::to_string(gen());
+    request["id"] = createUuidString();
 
     boost::beast::http::request<boost::beast::http::string_body> req{
         boost::beast::http::verb::post, std::format("/conversation/{}", conversation_id), 11};
@@ -2002,8 +1995,7 @@ boost::asio::awaitable<void> FreeGpt::liaobots(std::shared_ptr<Channel> ch, nloh
     })";
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
     request["messages"][0]["content"] = std::move(prompt);
-    boost::uuids::random_generator gen;
-    request["conversationId"] = boost::uuids::to_string(gen());
+    request["conversationId"] = createUuidString();
 
     boost::beast::http::request<boost::beast::http::string_body> chat_req{boost::beast::http::verb::post, "/api/chat",
                                                                           11};

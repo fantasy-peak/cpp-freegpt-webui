@@ -9,9 +9,6 @@
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
-#include <boost/uuid/uuid.hpp>
-#include <boost/uuid/uuid_generators.hpp>
-#include <boost/uuid/uuid_io.hpp>
 
 #include <spdlog/spdlog.h>
 #include <inja/inja.hpp>
@@ -20,11 +17,8 @@
 #include "free_gpt.h"
 #include "helper.hpp"
 
-constexpr auto use_nothrow_awaitable = boost::asio::as_tuple(boost::asio::use_awaitable);
-
-inline std::string CHAT_PATH{"/chat"};
-inline std::string ASSETS_PATH{"/assets"};
-inline std::string API_PATH{"/backend-api/v2/conversation"};
+constexpr std::string_view ASSETS_PATH{"/assets"};
+constexpr std::string_view API_PATH{"/backend-api/v2/conversation"};
 
 using GptCallback = std::function<boost::asio::awaitable<void>(std::shared_ptr<FreeGpt::Channel>, nlohmann::json)>;
 inline std::unordered_map<std::string, GptCallback> gpt_function;
@@ -54,13 +48,14 @@ void setEnvironment(auto& cfg) {
     }
     if (auto [api_key] = getEnv("API_KEY"); !api_key.empty())
         cfg.api_key = std::move(api_key);
+    if (auto [interval] = getEnv("INTERVAL"); !interval.empty())
+        cfg.interval = std::atol(interval.c_str());
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
-    boost::uuids::random_generator gen;
     inja::Environment env;
     nlohmann::json data;
-    data["chat_id"] = boost::uuids::to_string(gen());
+    data["chat_id"] = createUuidString();
     if (!cfg.providers.empty()) {
         data["model_list"] = cfg.providers;
     } else {
@@ -256,24 +251,24 @@ int main(int argc, char** argv) {
 
     FreeGpt app{cfg};
 
-    ADD_METHOD("gpt-4-stream-liaobots", FreeGpt::liaobots);
+    if (!cfg.api_key.empty())
+        ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
     ADD_METHOD("gpt-3.5-turbo-Wuguokai", FreeGpt::wuguokai);
     ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
     ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-weWordle", FreeGpt::weWordle);
-    // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
     ADD_METHOD("gpt-3.5-turbo-acytoo", FreeGpt::acytoo);
     ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);
-    // ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
     ADD_METHOD("gpt-3.5-turbo-stream-EasyChat", FreeGpt::easyChat);
-    // ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
     ADD_METHOD("gpt-3.5-turbo-stream-H2o", FreeGpt::h2o);
-    // ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
-    if (!cfg.api_key.empty())
-        ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
+    ADD_METHOD("gpt-4-stream-liaobots", FreeGpt::liaobots);
+    // ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
+    // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
+    // ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
+    // ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();

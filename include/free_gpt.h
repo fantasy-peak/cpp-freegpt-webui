@@ -29,15 +29,15 @@ public:
     boost::asio::awaitable<void> easyChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> acytoo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> openAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> h2o(std::shared_ptr<Channel> ch, nlohmann::json json);
-    boost::asio::awaitable<void> v50(std::shared_ptr<Channel> ch, nlohmann::json json);
-    boost::asio::awaitable<void> yqcloud(std::shared_ptr<Channel> ch, nlohmann::json json);
-    boost::asio::awaitable<void> wuguokai(std::shared_ptr<Channel> ch, nlohmann::json json);
-    boost::asio::awaitable<void> liaobots(std::shared_ptr<Channel> ch, nlohmann::json json);
+    boost::asio::awaitable<void> h2o(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> v50(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> yqcloud(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> wuguokai(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> liaobots(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
-    createHttpClient(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port);
+    createHttpClient(boost::asio::ssl::context&, std::string_view /* host */, std::string_view /* port */);
 
     Config& m_cfg;
 };

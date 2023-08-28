@@ -5,6 +5,11 @@
 #include <vector>
 
 #include <boost/asio.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
+
+constexpr auto use_nothrow_awaitable = boost::asio::as_tuple(boost::asio::use_awaitable);
 
 class IoContextPool final {
 public:
@@ -91,3 +96,8 @@ public:
 private:
     std::function<void()> m_call;
 };
+
+inline std::string createUuidString() {
+    static thread_local boost::uuids::random_generator gen;
+    return boost::uuids::to_string(gen());
+}
