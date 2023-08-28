@@ -19,9 +19,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev libglu1-mesa-dev p7zip gobjc g++-13 wget
-          wget https://github.com/xmake-io/xmake/releases/download/v2.8.1/xmake-v2.8.1.xz.run
-          chmod 777 xmake-v2.8.1.xz.run
-          ./xmake-v2.8.1.xz.run > a.txt
+          wget https://github.com/xmake-io/xmake/releases/download/v2.8.2/xmake-v2.8.2.xz.run
+          chmod 777 xmake-v2.8.2.xz.run
+          ./xmake-v2.8.2.xz.run > a.txt
 
       - name: checkout
         uses: actions/checkout@v3
