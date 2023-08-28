@@ -256,6 +256,7 @@ int main(int argc, char** argv) {
 
     FreeGpt app{cfg};
 
+    ADD_METHOD("gpt-4-stream-liaobots", FreeGpt::liaobots);
     ADD_METHOD("gpt-3.5-turbo-Wuguokai", FreeGpt::wuguokai);
     ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
     ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);

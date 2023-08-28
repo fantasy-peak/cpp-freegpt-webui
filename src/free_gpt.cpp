@@ -1950,3 +1950,77 @@ boost::asio::awaitable<void> FreeGpt::wuguokai(std::shared_ptr<Channel> ch, nloh
     co_await ch->async_send(err, std::move(body), use_nothrow_awaitable);
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::liaobots(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "liaobots.com";
+    constexpr std::string_view port = "443";
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/user", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set("authority", "liaobots.com");
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("origin", "https://liaobots.com");
+    req.set("referer", "https://liaobots.com/");
+
+    req.body() = R"({"authcode": ""})";
+    req.prepare_payload();
+
+    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+    if (!ret.has_value()) {
+        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& [res, ctx, stream_] = ret.value();
+    if (boost::beast::http::status::ok != res.result()) {
+        SPDLOG_ERROR("http status code: {}", res.result_int());
+        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
+        co_return;
+    }
+    nlohmann::json auth_rsp = nlohmann::json::parse(res.body(), nullptr, false);
+    std::string auth_code = auth_rsp.value("authCode", "");
+    SPDLOG_INFO("auth_code: {}", auth_code);
+
+    constexpr std::string_view json_str = R"({
+        "conversationId": "uuid",
+        "model": {
+            "id": "gpt-4",
+            "name": "GPT-4",
+            "maxLength": 24000,
+            "tokenLimit": 8000
+        },
+        "key": "",
+        "prompt": "You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully.",
+        "messages": [{"role": "user", "content": "hello"}]
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+    request["messages"][0]["content"] = std::move(prompt);
+    boost::uuids::random_generator gen;
+    request["conversationId"] = boost::uuids::to_string(gen());
+
+    boost::beast::http::request<boost::beast::http::string_body> chat_req{boost::beast::http::verb::post, "/api/chat",
+                                                                          11};
+    chat_req.set(boost::beast::http::field::host, host);
+    chat_req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    chat_req.set(boost::beast::http::field::content_type, "application/json");
+    chat_req.set("x-auth-code", auth_code);
+    chat_req.set("Accept", "application/json, text/plain, */*");
+
+    chat_req.body() = request.dump();
+    chat_req.prepare_payload();
+
+    co_await sendRequestRecvChunk(ch, stream_, chat_req, 200, [&ch](std::string str) {
+        boost::system::error_code err{};
+        ch->try_send(err, std::move(str));
+    });
+    co_return;
+}
