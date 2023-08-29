@@ -260,15 +260,16 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-weWordle", FreeGpt::weWordle);
     ADD_METHOD("gpt-3.5-turbo-acytoo", FreeGpt::acytoo);
     ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);
-    ADD_METHOD("gpt-3.5-turbo-stream-EasyChat", FreeGpt::easyChat);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
     ADD_METHOD("gpt-3.5-turbo-stream-H2o", FreeGpt::h2o);
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
     ADD_METHOD("gpt-4-stream-liaobots", FreeGpt::liaobots);
+    ADD_METHOD("gpt-OpenAssistant-stream-HuggingChat", FreeGpt::huggingChat)
     // ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
     // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
     // ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     // ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
+    // ADD_METHOD("gpt-3.5-turbo-stream-EasyChat", FreeGpt::easyChat);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();
