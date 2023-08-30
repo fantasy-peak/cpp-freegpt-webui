@@ -540,47 +540,50 @@ boost::asio::awaitable<void> FreeGpt::getGpt(std::shared_ptr<Channel> ch, nlohma
     ss << req;
     SPDLOG_INFO("request:\n{}", ss.str());
 
-    int recreate_num{0};
-create_client:
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
-        co_return;
-    }
-    auto& stream_ = client.value();
-
-    std::string recv;
-    auto ret = co_await sendRequestRecvChunk(ch, stream_, req, 201, [&ch, &recv](std::string chunk_str) {
-        recv.append(chunk_str);
-        while (true) {
-            auto position = recv.find("\n");
-            if (position == std::string::npos)
-                break;
-            auto msg = recv.substr(0, position + 1);
-            recv.erase(0, position + 1);
-            msg.pop_back();
-            if (msg.empty() || !msg.contains("content"))
-                continue;
-            auto fields = splitString(msg, "data: ");
-            boost::system::error_code err{};
-            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
-            if (line_json.is_discarded()) {
-                SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
-                continue;
-            }
-            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
-            if (!str.empty())
-                ch->try_send(err, str);
+    std::string error_info;
+    for (int i = 0; i < 3; i++) {
+        error_info.clear();
+        boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+        ctx.set_verify_mode(boost::asio::ssl::verify_none);
+        auto client = co_await createHttpClient(ctx, host, port);
+        if (!client.has_value()) {
+            SPDLOG_ERROR("createHttpClient: {}", client.error());
+            co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+            co_return;
         }
-    });
-    if (ret == Status::Close && recreate_num == 0) {
-        recreate_num++;
-        goto create_client;
+        auto& stream_ = client.value();
+
+        std::string recv;
+        auto ret = co_await sendRequestRecvChunk(error_info, stream_, req, 201, [&ch, &recv](std::string chunk_str) {
+            recv.append(chunk_str);
+            while (true) {
+                auto position = recv.find("\n");
+                if (position == std::string::npos)
+                    break;
+                auto msg = recv.substr(0, position + 1);
+                recv.erase(0, position + 1);
+                msg.pop_back();
+                if (msg.empty() || !msg.contains("content"))
+                    continue;
+                auto fields = splitString(msg, "data: ");
+                boost::system::error_code err{};
+                nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                if (line_json.is_discarded()) {
+                    SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                    ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                    continue;
+                }
+                auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                if (!str.empty())
+                    ch->try_send(err, str);
+            }
+        });
+        if (ret == Status::Ok)
+            break;
+        co_await timeout(std::chrono::seconds(5));
     }
+    if (!error_info.empty())
+        co_await ch->async_send(err, std::move(error_info), use_nothrow_awaitable);
     co_return;
 }
 
