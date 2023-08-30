@@ -1,9 +1,11 @@
 #include <chrono>
 #include <format>
 #include <iostream>
+#include <queue>
 #include <random>
 #include <ranges>
 #include <regex>
+#include <tuple>
 
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
@@ -234,6 +236,7 @@ enum class Status : uint8_t {
     Ok,
     Close,
     HasError,
+    UnexpectedHttpCode,
 };
 
 void printHttpHeader(auto& http_packet) {
@@ -254,13 +257,13 @@ std::optional<std::smatch> parse(const std::string& url) {
     return match;
 }
 
-boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, auto& req, int http_code,
-                                                    std::function<void(std::string)> cb) {
+boost::asio::awaitable<Status> sendRequestRecvChunk(std::string& error_info, auto& stream_, auto& req,
+                                                    std::size_t http_code, std::function<void(std::string)> cb) {
     boost::system::error_code err{};
     auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
     if (ec) {
         SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        error_info = ec.message();
         co_return Status::HasError;
     }
 
@@ -273,7 +276,7 @@ boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, aut
     }
     if (ec) {
         SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        error_info = ec.message();
         co_return Status::HasError;
     }
 
@@ -284,9 +287,8 @@ boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, aut
     if (result_int != http_code) {
         std::string reason{headers.reason()};
         SPDLOG_ERROR("http response code: {}, reason: {}", headers.result_int(), reason);
-        co_await ch->async_send(err, std::format("return unexpected http status code: {}({})", result_int, reason),
-                                use_nothrow_awaitable);
-        co_return Status::HasError;
+        error_info = std::format("return unexpected http status code: {}({})", result_int, reason);
+        co_return Status::UnexpectedHttpCode;
     }
 
     boost::beast::http::chunk_extensions ce;
@@ -326,6 +328,17 @@ boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, aut
             ec = {};
     }
     co_return Status::Ok;
+}
+
+boost::asio::awaitable<Status> sendRequestRecvChunk(auto& ch, auto& stream_, auto& req, std::size_t http_code,
+                                                    std::function<void(std::string)> cb) {
+    std::string error_info;
+    auto ret = co_await sendRequestRecvChunk(error_info, stream_, req, http_code, std::move(cb));
+    if (!error_info.empty()) {
+        boost::system::error_code err{};
+        co_await ch->async_send(err, std::move(error_info), use_nothrow_awaitable);
+    }
+    co_return ret;
 }
 
 std::expected<std::string, std::string> decompress(auto& res) {
@@ -1953,33 +1966,81 @@ boost::asio::awaitable<void> FreeGpt::liaobots(std::shared_ptr<Channel> ch, nloh
     constexpr std::string_view host = "liaobots.com";
     constexpr std::string_view port = "443";
 
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/user", 11};
-    req.set(boost::beast::http::field::host, host);
-    req.set(
-        boost::beast::http::field::user_agent,
-        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
-    req.set("authority", "liaobots.com");
-    req.set(boost::beast::http::field::content_type, "application/json");
-    req.set("origin", "https://liaobots.com");
-    req.set("referer", "https://liaobots.com/");
+    static std::mutex mtx;
+    static std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> auth_code_queue;
 
-    req.body() = R"({"authcode": ""})";
-    req.prepare_payload();
+    std::optional<boost::asio::ssl::context> ctx_opt;
+    std::optional<boost::beast::ssl_stream<boost::beast::tcp_stream>> stream_opt;
 
-    auto ret = co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
-    if (!ret.has_value()) {
-        co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
-        co_return;
+    std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> tmp_queue;
+    std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string> auth_code;
+
+    std::unique_lock lk(mtx);
+    while (!auth_code_queue.empty()) {
+        auto& [time_point, code] = auth_code_queue.front();
+        if (std::chrono::system_clock::now() - time_point < std::chrono::hours(2))
+            tmp_queue.push(std::move(auth_code_queue.front()));
+        auth_code_queue.pop();
     }
-    auto& [res, ctx, stream_] = ret.value();
-    if (boost::beast::http::status::ok != res.result()) {
-        SPDLOG_ERROR("http status code: {}", res.result_int());
-        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
-        co_return;
+    auth_code_queue = std::move(tmp_queue);
+    SPDLOG_INFO("auth_code_queue size: {}", auth_code_queue.size());
+    if (auth_code_queue.empty()) {
+        lk.unlock();
+        SPDLOG_INFO("start get auth code...");
+        boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/user",
+                                                                         11};
+        req.set(boost::beast::http::field::host, host);
+        req.set(
+            boost::beast::http::field::user_agent,
+            R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+        req.set("authority", "liaobots.com");
+        req.set(boost::beast::http::field::content_type, "application/json");
+        req.set("origin", "https://liaobots.com");
+        req.set("referer", "https://liaobots.com/");
+
+        req.body() = R"({"authcode": ""})";
+        req.prepare_payload();
+
+        auto ret =
+            co_await sendRequestRecvResponse(req, host, port, std::bind_front(&FreeGpt::createHttpClient, *this));
+        if (!ret.has_value()) {
+            co_await ch->async_send(err, ret.error(), use_nothrow_awaitable);
+            co_return;
+        }
+        auto& [res, ctx, stream] = ret.value();
+        if (boost::beast::http::status::ok != res.result()) {
+            SPDLOG_ERROR("http status code: {}", res.result_int());
+            co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
+            co_return;
+        }
+        stream_opt = std::move(stream);
+        ctx_opt = std::move(ctx);
+        nlohmann::json auth_rsp = nlohmann::json::parse(res.body(), nullptr, false);
+        auth_code = std::make_tuple(std::chrono::system_clock::now(), auth_rsp.value("authCode", ""));
+        SPDLOG_INFO("auth_code: {}", std::get<1>(auth_code));
+        if (std::get<1>(auth_code).empty()) {
+            co_await ch->async_send(err, "not get auth code", use_nothrow_awaitable);
+            co_return;
+        }
+    } else {
+        auth_code = std::move(auth_code_queue.front());
+        auth_code_queue.pop();
+        lk.unlock();
     }
-    nlohmann::json auth_rsp = nlohmann::json::parse(res.body(), nullptr, false);
-    std::string auth_code = auth_rsp.value("authCode", "");
-    SPDLOG_INFO("auth_code: {}", auth_code);
+
+    if (!stream_opt.has_value()) {
+        boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+        ctx.set_verify_mode(boost::asio::ssl::verify_none);
+        auto client = co_await createHttpClient(ctx, host, port);
+        if (!client.has_value()) {
+            SPDLOG_ERROR("createHttpClient: {}", client.error());
+            co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+            co_return;
+        }
+        ctx_opt = std::move(ctx);
+        stream_opt = std::move(client.value());
+    }
+    auto& stream_ = stream_opt.value();
 
     constexpr std::string_view json_str = R"({
         "conversationId": "uuid",
@@ -2004,16 +2065,38 @@ boost::asio::awaitable<void> FreeGpt::liaobots(std::shared_ptr<Channel> ch, nloh
         boost::beast::http::field::user_agent,
         R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
     chat_req.set(boost::beast::http::field::content_type, "application/json");
-    chat_req.set("x-auth-code", auth_code);
+    chat_req.set("x-auth-code", std::get<1>(auth_code));
     chat_req.set("Accept", "application/json, text/plain, */*");
 
     chat_req.body() = request.dump();
     chat_req.prepare_payload();
 
-    co_await sendRequestRecvChunk(ch, stream_, chat_req, 200, [&ch](std::string str) {
-        boost::system::error_code err{};
-        ch->try_send(err, std::move(str));
-    });
+    std::string error_info;
+    for (int i = 0; i < 3; i++) {
+        error_info.clear();
+        auto ret = co_await sendRequestRecvChunk(error_info, stream_, chat_req, 200, [&ch](std::string str) {
+            boost::system::error_code err{};
+            ch->try_send(err, std::move(str));
+        });
+        if (ret == Status::Ok)
+            break;
+        co_await timeout(std::chrono::seconds(5));
+        auto client = co_await createHttpClient(ctx_opt.value(), host, port);
+        if (!client.has_value()) {
+            SPDLOG_ERROR("createHttpClient: {}", client.error());
+            co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+            co_return;
+        }
+        stream_ = std::move(client.value());
+    }
+
+    if (!error_info.empty())
+        co_await ch->async_send(err, std::move(error_info), use_nothrow_awaitable);
+
+    {
+        std::lock_guard lk(mtx);
+        auth_code_queue.push(std::move(auth_code));
+    }
     co_return;
 }
 
