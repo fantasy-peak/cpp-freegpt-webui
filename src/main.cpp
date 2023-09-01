@@ -5,6 +5,9 @@
 #include <semaphore>
 #include <string>
 
+#include <stdio.h>
+#include <stdlib.h>
+
 #include <boost/asio/as_tuple.hpp>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
@@ -26,6 +29,7 @@ inline std::unordered_map<std::string, GptCallback> gpt_function;
 #define ADD_METHOD(name, function) gpt_function[name] = std::bind_front(&function, app);
 
 void setEnvironment(auto& cfg) {
+    setenv("CURL_IMPERSONATE", "chrome110", 1);
     if (cfg.enable_proxy) {
         auto [lower_http_proxy, upper_http_proxy] = getEnv("http_proxy", "HTTP_PROXY");
         if (!lower_http_proxy.empty())
@@ -265,6 +269,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
     ADD_METHOD("gpt-4-stream-liaobots", FreeGpt::liaobots);
     ADD_METHOD("gpt-OpenAssistant-stream-HuggingChat", FreeGpt::huggingChat)
+    ADD_METHOD("gpt-3.5-turbo-stream-you", FreeGpt::you);
     // ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
     // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
     // ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
