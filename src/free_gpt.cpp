@@ -6,11 +6,14 @@
 #include <ranges>
 #include <regex>
 #include <tuple>
+#include <vector>
 
+#include <curl/curl.h>
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
 #include <zlib.h>
 #include <boost/asio/as_tuple.hpp>
+#include <boost/asio/experimental/channel.hpp>
 #include <boost/iostreams/copy.hpp>
 #include <boost/iostreams/device/array.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
@@ -29,18 +32,15 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
-Container operator|(R&& r, to_helper<Container>) {
+requires std::convertible_to < std::ranges::range_value_t<R>,
+typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-    requires(!std::ranges::view<Container>)
-inline auto to() {
-    return detail::to_helper<Container>{};
-}
+requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -400,9 +400,80 @@ create_client:
     co_return std::make_tuple(res, std::move(ctx), std::move(stream_));
 }
 
+size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    static_cast<std::string*>(userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
+    static_cast<std::string*>(userdata)->append((char*)buffer, size * nitems);
+    return nitems * size;
+}
+
+// export CURL_IMPERSONATE=chrome110
+std::tuple<int32_t, std::vector<std::string>, std::string> getCookie(const std::string& url,
+                                                                     const std::string& proxy) {
+    CURL* curl;
+    CURLcode res;
+    std::string read_buffer;
+    std::string buffer;
+    std::vector<std::string> header_data;
+    curl = curl_easy_init();
+    if (curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        if (!proxy.empty())
+            curl_easy_setopt(curl, CURLOPT_PROXY, proxy.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_CAINFO, NULL);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &read_buffer);
+        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
+        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &buffer);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 3L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
+        res = curl_easy_perform(curl);
+        if (res != CURLE_OK) {
+            SPDLOG_ERROR("curl_easy_perform() failed: [{}]", curl_easy_strerror(res));
+            return std::make_tuple(-1, header_data, read_buffer);
+        }
+        int32_t response_code;
+
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+
+        header_data = splitString(buffer, "\n");
+        return std::make_tuple(response_code, header_data, read_buffer);
+    }
+    return std::make_tuple(-1, header_data, read_buffer);
+}
+
+size_t youWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+    boost::system::error_code err{};
+    auto ch_ptr = static_cast<FreeGpt::Channel*>(userp);
+    std::string data{(char*)contents, size * nmemb};
+    if (data.starts_with(R"(event: youChatToken)")) {
+        static std::string to_erase{"event: youChatToken\ndata: "};
+        size_t pos = data.find(to_erase);
+        if (pos != std::string::npos)
+            data.erase(pos, to_erase.length());
+        nlohmann::json line_json = nlohmann::json::parse(data, nullptr, false);
+        if (line_json.is_discarded()) {
+            SPDLOG_ERROR("json parse error: [{}]", data);
+            boost::asio::post(ch_ptr->get_executor(),
+                              [=] { ch_ptr->try_send(err, std::format("json parse error: [{}]", data)); });
+            return size * nmemb;
+        }
+        auto str = line_json["youChatToken"].get<std::string>();
+        boost::asio::post(ch_ptr->get_executor(), [=] { ch_ptr->try_send(err, str); });
+    }
+    return size * nmemb;
+}
+
 }  // namespace
 
-FreeGpt::FreeGpt(Config& cfg) : m_cfg(cfg) {}
+FreeGpt::FreeGpt(Config& cfg)
+    : m_cfg(cfg), m_thread_pool_ptr(std::make_shared<boost::asio::thread_pool>(m_cfg.work_thread_num)) {}
 
 boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
 FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host, std::string_view port) {
@@ -2254,6 +2325,80 @@ boost::asio::awaitable<void> FreeGpt::huggingChat(std::shared_ptr<Channel> ch, n
             if (!str.empty())
                 ch->try_send(err, str);
         }
+    });
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::asio::post(*m_thread_pool_ptr, [=, this] {
+        boost::system::error_code err{};
+        auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+        auto [http_code, header, body] = getCookie("https://you.com", m_cfg.http_proxy);
+        SPDLOG_INFO("http_code: {}", http_code);
+        ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+        std::string cookie;
+        for (auto& data : header) {
+            if (data.starts_with("set-cookie: __cf_bm")) {
+                auto fields = splitString(data, " ");
+                if (fields.size() < 1) {
+                    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "can't get cookie"); });
+                    return;
+                }
+                cookie = std::move(fields[1]);
+                break;
+            }
+        }
+        SPDLOG_INFO("cookie: {}", cookie);
+
+        CURL* curl;
+        CURLcode res;
+
+        curl = curl_easy_init();
+        if (!curl) {
+            auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
+            return;
+        }
+        auto url = std::format(
+            "https://you.com/api/"
+            "streamingSearch?q={}&page=1&count=10&safeSearch=Off&onShoppingPage=False&mkt=&responseFilter="
+            "WebPages%"
+            "2CTranslations%2CTimeZone%2CComputation%2CRelatedSearches&domain=youchat&queryTraceId={}",
+            urlEncode(prompt), createUuidString());
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        if (!m_cfg.http_proxy.empty())
+            curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, youWriteCallback);
+        curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, ch.get());
+        auto cookie_str = std::format("uuid_guest={}; safesearch_guest=Off; {}", createUuidString(), cookie);
+        curl_easy_setopt(curl, CURLOPT_COOKIE, cookie_str.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 3L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "referer: https://you.com/search?q=gpt4&tbm=youchat");
+        headers = curl_slist_append(headers, "Accept: text/event-stream");
+        ScopeExit auto_exit{[=] {
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+        }};
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
+            return;
+        }
+        int32_t response_code;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code != 200) {
+            boost::asio::post(ch->get_executor(),
+                              [=] { ch->try_send(err, std::format("you http code:{}", response_code)); });
+        }
+        return;
     });
     co_return;
 }

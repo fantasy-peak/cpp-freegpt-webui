@@ -5,6 +5,7 @@
 
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/experimental/channel.hpp>
+#include <boost/asio/thread_pool.hpp>
 #include <boost/beast.hpp>
 #include <boost/beast/ssl.hpp>
 #include <nlohmann/json.hpp>
@@ -35,10 +36,12 @@ public:
     boost::asio::awaitable<void> wuguokai(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> liaobots(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> huggingChat(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> you(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
     createHttpClient(boost::asio::ssl::context&, std::string_view /* host */, std::string_view /* port */);
 
     Config& m_cfg;
+    std::shared_ptr<boost::asio::thread_pool> m_thread_pool_ptr;
 };
