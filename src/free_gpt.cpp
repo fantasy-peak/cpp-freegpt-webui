@@ -730,12 +730,18 @@ boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nloh
     constexpr std::string_view port = "443";
 
     boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
-                                                                     "/api/chat-process", 11};
+                                                                     "/api/chat-process", 10};
     req.set(boost::beast::http::field::host, host);
-    req.set(
-        boost::beast::http::field::user_agent,
-        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set(boost::beast::http::field::user_agent,
+            R"(Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/116.0)");
+    req.set("Accept", "application/json, text/plain, */*");
+    req.set("Accept-Language", "de,en-US;q=0.7,en;q=0.3");
     req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("Origin", "https://www.aitianhu.com");
+    req.set("Referer", "https://www.aitianhu.com/");
+    req.set("Sec-Fetch-Dest", "empty");
+    req.set("Sec-Fetch-Mode", "cors");
+    req.set("Sec-Fetch-Site", "same-origin");
     nlohmann::json data{
         {"prompt", std::format("user: {}\nassistant:", prompt)},
         {"options", std::unordered_map<std::string, std::string>{}},
