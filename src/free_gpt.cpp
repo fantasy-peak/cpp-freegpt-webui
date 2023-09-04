@@ -32,15 +32,18 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-requires std::convertible_to < std::ranges::range_value_t<R>,
-typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
+    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
+Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
+    requires(!std::ranges::view<Container>)
+inline auto to() {
+    return detail::to_helper<Container>{};
+}
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -2405,6 +2408,56 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
                               [=] { ch->try_send(err, std::format("you http code:{}", response_code)); });
         }
         return;
+    });
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::binjie(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "api.binjie.fun";
+    constexpr std::string_view port = "443";
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
+                                                                     "/api/generateStream", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(
+        boost::beast::http::field::user_agent,
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)");
+    req.set("Accept", "application/json, text/plain, */*");
+    req.set("accept-language", "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7");
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("origin", "https://chat.jinshutuan.com");
+
+    constexpr std::string_view json_str = R"({
+        "prompt":"user: hello\nassistant:",
+        "system": "Always talk in English.",
+        "withoutContext":true,
+        "stream":true
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+    request["prompt"] = prompt;
+
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+
+    auto ret = co_await sendRequestRecvChunk(ch, client.value(), req, 200, [&ch](std::string str) {
+        boost::system::error_code err{};
+        ch->try_send(err, std::move(str));
     });
     co_return;
 }
