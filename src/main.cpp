@@ -271,6 +271,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-OpenAssistant-stream-HuggingChat", FreeGpt::huggingChat)
     ADD_METHOD("gpt-4-turbo-stream-you", FreeGpt::you);
     ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
+    ADD_METHOD("gpt-3-stream-binjie", FreeGpt::binjie);
     // ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
     // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
     // ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
