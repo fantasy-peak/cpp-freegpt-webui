@@ -2365,23 +2365,50 @@ boost::asio::awaitable<void> FreeGpt::huggingChat(std::shared_ptr<Channel> ch, n
 boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann::json json) {
     boost::asio::post(*m_thread_pool_ptr, [=, this] {
         boost::system::error_code err{};
-        auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-        auto [http_code, header, body] = getCookie("https://you.com", m_cfg.http_proxy);
-        SPDLOG_INFO("http_code: {}", http_code);
         ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
-        std::string cookie;
-        for (auto& data : header) {
-            if (data.starts_with("set-cookie: __cf_bm")) {
-                auto fields = splitString(data, " ");
-                if (fields.size() < 1) {
-                    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "can't get cookie"); });
-                    return;
-                }
-                cookie = std::move(fields[1]);
-                break;
-            }
+
+        auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+        static std::mutex mtx;
+        static std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> cookie_queue;
+        std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string> cookie_cache;
+        std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> tmp_queue;
+        std::unique_lock lk(mtx);
+        while (!cookie_queue.empty()) {
+            auto& [time_point, code] = cookie_queue.front();
+            if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(15))
+                tmp_queue.push(std::move(cookie_queue.front()));
+            cookie_queue.pop();
         }
-        SPDLOG_INFO("cookie: {}", cookie);
+        cookie_queue = std::move(tmp_queue);
+        SPDLOG_INFO("cookie_queue size: {}", cookie_queue.size());
+        if (cookie_queue.empty()) {
+            lk.unlock();
+            auto [http_code, header, body] = getCookie("https://you.com", m_cfg.http_proxy);
+            SPDLOG_INFO("http_code: {}", http_code);
+            std::string cookie;
+            for (auto& data : header) {
+                if (data.starts_with("set-cookie: __cf_bm")) {
+                    auto fields = splitString(data, " ");
+                    if (fields.size() < 1) {
+                        boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "can't get cookie"); });
+                        return;
+                    }
+                    cookie = std::move(fields[1]);
+                    break;
+                }
+            }
+            if (cookie.empty()) {
+                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "cookie is empty"); });
+                return;
+            }
+            cookie_cache = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie));
+        } else {
+            cookie_cache = std::move(cookie_queue.front());
+            cookie_queue.pop();
+            lk.unlock();
+        }
+        SPDLOG_INFO("cookie: {}", std::get<1>(cookie_cache));
 
         CURL* curl;
         CURLcode res;
@@ -2406,8 +2433,9 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, ch.get());
-        auto cookie_str = std::format("uuid_guest={}; safesearch_guest=Off; {}", createUuidString(), cookie);
-        curl_easy_setopt(curl, CURLOPT_COOKIE, cookie_str.c_str());
+        auto cookie_str =
+            std::format("uuid_guest={}; safesearch_guest=Off; {}", createUuidString(), std::get<1>(cookie_cache));
+        curl_easy_setopt(curl, CURLOPT_COOKIE, std::get<1>(cookie_cache).c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 3L);
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
         struct curl_slist* headers = nullptr;
@@ -2430,6 +2458,10 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
         if (response_code != 200) {
             boost::asio::post(ch->get_executor(),
                               [=] { ch->try_send(err, std::format("you http code:{}", response_code)); });
+        }
+        {
+            std::lock_guard lk(mtx);
+            cookie_queue.push(std::move(cookie_cache));
         }
         return;
     });
