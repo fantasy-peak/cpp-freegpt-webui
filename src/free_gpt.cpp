@@ -457,28 +457,6 @@ std::tuple<int32_t, std::vector<std::string>, std::string> getCookie(const std::
     return std::make_tuple(-1, header_data, read_buffer);
 }
 
-size_t youWriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    boost::system::error_code err{};
-    auto ch_ptr = static_cast<FreeGpt::Channel*>(userp);
-    std::string data{(char*)contents, size * nmemb};
-    if (data.starts_with(R"(event: youChatToken)")) {
-        static std::string to_erase{"event: youChatToken\ndata: "};
-        size_t pos = data.find(to_erase);
-        if (pos != std::string::npos)
-            data.erase(pos, to_erase.length());
-        nlohmann::json line_json = nlohmann::json::parse(data, nullptr, false);
-        if (line_json.is_discarded()) {
-            SPDLOG_ERROR("json parse error: [{}]", data);
-            boost::asio::post(ch_ptr->get_executor(),
-                              [=] { ch_ptr->try_send(err, std::format("json parse error: [{}]", data)); });
-            return size * nmemb;
-        }
-        auto str = line_json["youChatToken"].get<std::string>();
-        boost::asio::post(ch_ptr->get_executor(), [=] { ch_ptr->try_send(err, str); });
-    }
-    return size * nmemb;
-}
-
 }  // namespace
 
 FreeGpt::FreeGpt(Config& cfg)
@@ -2428,7 +2406,29 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         if (!m_cfg.http_proxy.empty())
             curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, youWriteCallback);
+        auto cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+            boost::system::error_code err{};
+            auto ch_ptr = static_cast<FreeGpt::Channel*>(userp);
+            std::string data{(char*)contents, size * nmemb};
+            if (data.starts_with(R"(event: youChatToken)")) {
+                static std::string to_erase{"event: youChatToken\ndata: "};
+                size_t pos = data.find(to_erase);
+                if (pos != std::string::npos)
+                    data.erase(pos, to_erase.length());
+                nlohmann::json line_json = nlohmann::json::parse(data, nullptr, false);
+                if (line_json.is_discarded()) {
+                    SPDLOG_ERROR("json parse error: [{}]", data);
+                    boost::asio::post(ch_ptr->get_executor(),
+                                      [=] { ch_ptr->try_send(err, std::format("json parse error: [{}]", data)); });
+                    return size * nmemb;
+                }
+                auto str = line_json["youChatToken"].get<std::string>();
+                boost::asio::post(ch_ptr->get_executor(), [=] { ch_ptr->try_send(err, str); });
+            }
+            return size * nmemb;
+        };
+        size_t (*fn)(void* contents, size_t size, size_t nmemb, void* userp) = cb;
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fn);
         curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
