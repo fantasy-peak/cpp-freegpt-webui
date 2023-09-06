@@ -149,7 +149,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                 model = request_body.at("model");
                 auto prompt = request_body.at("meta").at("content").at("parts").at(0).at("content");
             } catch (const nlohmann::json::exception& e) {
-                SPDLOG_ERROR("nlohmann json: {}", e.what());
+                SPDLOG_ERROR("nlohmann json: [{}], [{}]", e.what(), request.body());
                 flag = true;
             }
             if (flag) {
