@@ -33,18 +33,15 @@ template <typename C>
 struct to_helper {};
 
 template <typename Container, std::ranges::range R>
-    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
-Container operator|(R&& r, to_helper<Container>) {
+requires std::convertible_to < std::ranges::range_value_t<R>,
+typename Container::value_type > Container operator|(R&& r, to_helper<Container>) {
     return Container{r.begin(), r.end()};
 }
 
 }  // namespace detail
 
 template <std::ranges::range Container>
-    requires(!std::ranges::view<Container>)
-inline auto to() {
-    return detail::to_helper<Container>{};
-}
+requires(!std::ranges::view<Container>) inline auto to() { return detail::to_helper<Container>{}; }
 
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
@@ -2514,6 +2511,87 @@ boost::asio::awaitable<void> FreeGpt::binjie(std::shared_ptr<Channel> ch, nlohma
     auto ret = co_await sendRequestRecvChunk(ch, client.value(), req, 200, [&ch](std::string str) {
         boost::system::error_code err{};
         ch->try_send(err, std::move(str));
+    });
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::codeLinkAva(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    constexpr std::string_view host = "ava-alpha-api.codelink.io";
+    constexpr std::string_view port = "443";
+
+    constexpr std::string_view user_agent{
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36)"};
+
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/chat", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(boost::beast::http::field::user_agent, user_agent);
+    req.set("Accept", "*/*");
+    req.set("accept-language", "en,fr-FR;q=0.9,fr;q=0.8,es-ES;q=0.7,es;q=0.6,en-US;q=0.5,am;q=0.4,de;q=0.3");
+    req.set("origin", "https://ava-ai-ef611.web.app");
+    req.set("referer", "https://ava-ai-ef611.web.app/");
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("sec-fetch-dest", "empty");
+    req.set("sec-fetch-mode", "cors");
+    req.set("sec-fetch-site", "same-origin");
+
+    constexpr std::string_view json_str = R"({
+        "messages": [
+            {
+                "role": "user",
+                "content": "hello"
+            }
+        ],
+        "stream": true,
+        "temperature": 0.6
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    request["messages"][0]["content"] = prompt;
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    std::string recv;
+    auto result = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch, &recv](std::string chunk_str) {
+        recv.append(chunk_str);
+        while (true) {
+            auto position = recv.find("\n");
+            if (position == std::string::npos)
+                break;
+            auto msg = recv.substr(0, position + 1);
+            recv.erase(0, position + 1);
+            msg.pop_back();
+            if (msg.empty() || !msg.contains("content"))
+                continue;
+            auto fields = splitString(msg, "data:");
+            boost::system::error_code err{};
+            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                continue;
+            }
+            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+            if (!str.empty())
+                ch->try_send(err, str);
+        }
     });
     co_return;
 }
