@@ -13,6 +13,7 @@ struct Config {
     bool enable_proxy;
     std::string http_proxy;
     std::string api_key;
+    std::vector<std::string> ip_white_list;
 };
 YCS_ADD_STRUCT(Config, client_root_path, interval, work_thread_num, host, port, chat_path, providers, enable_proxy,
-               http_proxy, api_key)
+               http_proxy, api_key, ip_white_list)
