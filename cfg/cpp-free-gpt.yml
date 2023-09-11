@@ -2,3 +2,4 @@
 client_root_path: "../client"
 enable_proxy: true
 providers: []
+ip_white_list: []

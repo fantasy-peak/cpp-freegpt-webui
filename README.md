@@ -21,6 +21,13 @@ git clone https://github.com/fantasy-peak/cpp-freegpt-webui.git
 To run the application, run the following command:
 
 ```
+wget https://github.com/lwthiker/curl-impersonate/releases/download/v0.5.4/libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
+sudo mv libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz /usr/lib64
+cd /usr/lib64
+sudo tar -xvf libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
+export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
+export LIBRARY_PATH=/usr/lib64:$LIBRARY_PATH
+
 cd cpp-freegpt-webui
 xmake build -v
 xmake install -o .
@@ -48,6 +55,8 @@ docker run -p 8858:8858 -it --name freegpt fantasypeak/freegpt:latest
 docker run -p 8858:8858 -it --name freegpt -e HTTP_PROXY=http://127.0.0.1:8080 -e CHAT_PATH=/chat fantasypeak/freegpt:latest
 // set active providers
 docker run -p 8858:8858 -it --name freegpt -e CHAT_PATH=/chat -e PROVIDERS="[\"gpt-4-ChatgptAi\",\"gpt-3.5-turbo-stream-DeepAi\"]" fantasypeak/freegpt:latest
+// enable ip white list function
+docker run -p 8858:8858 -it --name freegpt -e IP_WHITE_LIST="[\"127.0.0.1\",\"192.168.1.1\"]" fantasypeak/freegpt:latest
 ```
 
 ### Call OpenAi Api

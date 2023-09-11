@@ -54,6 +54,12 @@ void setEnvironment(auto& cfg) {
         cfg.api_key = std::move(api_key);
     if (auto [interval] = getEnv("INTERVAL"); !interval.empty())
         cfg.interval = std::atol(interval.c_str());
+    // export IP_WHITE_LIST="[\"127.0.0.1\",\"192.168.1.1\"]"
+    if (auto [ip_white_list_str] = getEnv("IP_WHITE_LIST"); !ip_white_list_str.empty()) {
+        nlohmann::json ip_white_list = nlohmann::json::parse(ip_white_list_str, nullptr, false);
+        if (!ip_white_list.is_discarded())
+            cfg.ip_white_list = ip_white_list.get<std::vector<std::string>>();
+    }
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
@@ -88,6 +94,24 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
         boost::beast::error_code ec;
         stream.socket().shutdown(boost::asio::ip::tcp::socket::shutdown_both, ec);
     }};
+    boost::beast::error_code ec{};
+    boost::asio::ip::tcp::endpoint endpoint = boost::beast::get_lowest_layer(stream).socket().remote_endpoint(ec);
+    if (ec) {
+        SPDLOG_ERROR("get remote_endpoint error: {}", ec.message());
+        co_return;
+    }
+    std::string remote_ip{endpoint.address().to_string()};
+    if (!cfg.ip_white_list.empty() && std::ranges::find(cfg.ip_white_list, remote_ip) == cfg.ip_white_list.end()) {
+        SPDLOG_INFO("[{}] not in ip white list.", remote_ip);
+        boost::beast::http::response<boost::beast::http::string_body> res{boost::beast::http::status::unauthorized,
+                                                                          11};
+        res.set(boost::beast::http::field::server, "CppFreeGpt");
+        res.body() = "Invalid IP address";
+        res.prepare_payload();
+        boost::beast::http::message_generator rsp = std::move(res);
+        co_await boost::beast::async_write(stream, std::move(rsp), use_nothrow_awaitable);
+        co_return;
+    }
     while (true) {
         boost::beast::flat_buffer buffer;
         boost::beast::http::request<boost::beast::http::string_body> request;
