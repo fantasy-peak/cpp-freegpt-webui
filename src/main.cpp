@@ -298,10 +298,9 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3-stream-binjie", FreeGpt::binjie);
     ADD_METHOD("gpt-3.5-turbo-stream-CodeLinkAva", FreeGpt::codeLinkAva);
     ADD_METHOD("gpt-4-stream-ChatBase", FreeGpt::chatBase);
-    // ADD_METHOD("gpt-3.5-turbo-stream-v50", FreeGpt::v50);
-    // ADD_METHOD("gpt-3.5-turbo-AiService", FreeGpt::aiService);
-    // ADD_METHOD("gpt-3.5-turbo-stream-ChatFree", FreeGpt::chatFree);
-    // ADD_METHOD("gpt-3.5-turbo-stream-EasyChat", FreeGpt::easyChat);
+    ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
+    ADD_METHOD("gpt-3.5-turbo-stream-Ylokh", FreeGpt::ylokh);
+    ADD_METHOD("gpt-3.5-turbo-stream-Vitalentum", FreeGpt::vitalentum);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();
