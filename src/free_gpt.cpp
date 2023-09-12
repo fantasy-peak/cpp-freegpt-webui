@@ -499,16 +499,33 @@ FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host,
         co_return stream_;
     }
 
-    auto match_opt = parse(m_cfg.http_proxy);
-    if (!match_opt.has_value())
-        co_return std::unexpected(std::format("invalid http_proxy: {}", m_cfg.http_proxy));
-    auto& match = match_opt.value();
-
-    // auto& protocol = match[1];
-    // auto& target = match[4];
-    std::string_view proxy_host{m_cfg.http_proxy.data() + match.position(2), static_cast<uint64_t>(match.length(2))};
-    std::string_view proxy_port{m_cfg.http_proxy.data() + match.position(3), static_cast<uint64_t>(match.length(3))};
-
+    std::string userinfo, proxy_host, proxy_port;
+    auto is_auth_proxy = [](const std::string& str) -> bool {
+        std::regex pattern("^http://[^:]+:[^@]+@[^:]+:[0-9]+$");
+        return std::regex_match(str, pattern);
+    };
+    // http://username:password@proxy.example.com:8080
+    if (is_auth_proxy(m_cfg.http_proxy)) {
+        static std::regex pattern("(http|https)://([^:]+):([^@]+)@([^:]+):([0-9]+)");
+        std::smatch matches;
+        if (!std::regex_match(m_cfg.http_proxy, matches, pattern))
+            co_return std::unexpected(std::format("invalid http_proxy: {}", m_cfg.http_proxy));
+        // std::string protocol = matches[1];
+        std::string username = matches[2];
+        std::string password = matches[3];
+        proxy_host = matches[4];
+        proxy_port = matches[5];
+        userinfo = std::format("{}:{}", username, password);
+    } else {
+        auto match_opt = parse(m_cfg.http_proxy);
+        if (!match_opt.has_value())
+            co_return std::unexpected(std::format("invalid http_proxy: {}", m_cfg.http_proxy));
+        auto& match = match_opt.value();
+        // auto& protocol = match[1];
+        // auto& target = match[4];
+        proxy_host = match[2];
+        proxy_port = match[3];
+    }
     SPDLOG_INFO("CONNECT TO HTTP_PROXY [{}:{}]", proxy_host, proxy_port);
 
     auto resolver = boost::asio::ip::tcp::resolver(co_await boost::asio::this_coro::executor);
@@ -528,6 +545,15 @@ FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host,
     boost::beast::http::request<boost::beast::http::string_body> connect_req{
         boost::beast::http::verb::connect, std::format("{}:{}", host, port), http_version};
     connect_req.set(boost::beast::http::field::host, host);
+
+    if (!userinfo.empty()) {
+        std::string result(boost::beast::detail::base64::encoded_size(userinfo.size()), 0);
+        auto len =
+            boost::beast::detail::base64::encode(static_cast<char*>(result.data()), userinfo.c_str(), userinfo.size());
+        result.resize(len);
+        result = "Basic " + result;
+        connect_req.set(boost::beast::http::field::proxy_authorization, result);
+    }
 
     std::size_t count;
     std::tie(ec, count) = co_await boost::beast::http::async_write(boost::beast::get_lowest_layer(stream_),
