@@ -40,6 +40,9 @@ public:
     boost::asio::awaitable<void> binjie(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> codeLinkAva(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatBase(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> aivvm(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> ylokh(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> vitalentum(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
