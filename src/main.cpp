@@ -281,7 +281,6 @@ int main(int argc, char** argv) {
 
     if (!cfg.api_key.empty())
         ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
-    ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
     ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-weWordle", FreeGpt::weWordle);
@@ -301,6 +300,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-Vitalentum", FreeGpt::vitalentum);
     // ADD_METHOD("gpt-3.5-turbo-Wuguokai", FreeGpt::wuguokai);
     // ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);
+    // ADD_METHOD("gpt-3.5-turbo-opchatgpts", FreeGpt::opChatGpts);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();

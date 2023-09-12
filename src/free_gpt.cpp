@@ -2559,7 +2559,7 @@ boost::asio::awaitable<void> FreeGpt::vitalentum(std::shared_ptr<Channel> ch, nl
 
     constexpr std::string_view conversation_str{R"({"history": [{"speaker": "human", "text": ""}]})"};
     nlohmann::json conversation_json = nlohmann::json::parse(conversation_str, nullptr, false);
-    conversation_json["history"][0]["text"] = "hello";
+    conversation_json["history"][0]["text"] = std::move(prompt);
 
     constexpr std::string_view request_str{R"({
         "conversation":"{\"history\": [{\"speaker\": \"human\", \"text\": \"hello\"}]}",
