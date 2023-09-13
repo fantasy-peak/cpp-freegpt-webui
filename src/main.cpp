@@ -239,7 +239,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
             res.body().more = false;
             std::tie(ec, count) = co_await boost::beast::http::async_write(stream, sr, use_nothrow_awaitable);
         } else {
-            SPDLOG_ERROR("bad_request: [{}]", request.target());
+            SPDLOG_ERROR("bad_request: [{}], Expected path is: [{}]", request.target(), cfg.chat_path);
             co_await sendHttpResponse(stream, request, boost::beast::http::status::bad_request);
             co_return;
         }
@@ -276,7 +276,10 @@ int main(int argc, char** argv) {
 
     setEnvironment(cfg);
     auto [yaml_cfg_str, _] = yaml_cpp_struct::to_yaml(cfg);
-    SPDLOG_INFO("{}", yaml_cpp_struct::yaml_to_json(yaml_cfg_str.value()).dump(2));
+    SPDLOG_INFO("\n{}", yaml_cpp_struct::yaml_to_json(yaml_cfg_str.value()).dump(2));
+    std::cout << "\033[32m"
+              << "GitHub: https://github.com/fantasy-peak/cpp-freegpt-webui"
+              << "\033[0m" << std::endl;
 
     FreeGpt app{cfg};
 
@@ -310,15 +313,13 @@ int main(int argc, char** argv) {
 
     boost::asio::ip::tcp::resolver resolver(context);
     boost::asio::ip::tcp::endpoint endpoint = *resolver.resolve(cfg.host, cfg.port).begin();
-    std::stringstream ss;
-    ss << endpoint;
 
     acceptor.open(endpoint.protocol());
     boost::system::error_code ec;
 
     acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
     acceptor.bind(endpoint);
-    SPDLOG_INFO("server start accept at {} ...", ss.str());
+    SPDLOG_INFO("server start accept at {} ...", endpoint.address().to_string());
     acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec) {
         SPDLOG_ERROR("{}", ec.message());
