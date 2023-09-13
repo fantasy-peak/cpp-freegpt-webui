@@ -459,6 +459,12 @@ std::tuple<int32_t, std::vector<std::string>, std::string> getCookie(const std::
     return std::make_tuple(-1, header_data, read_buffer);
 }
 
+auto getConversationJson(const nlohmann::json& json) {
+    auto conversation = json.at("meta").at("content").at("conversation");
+    conversation.push_back(json.at("meta").at("content").at("parts").at(0));
+    return conversation;
+}
+
 }  // namespace
 
 FreeGpt::FreeGpt(Config& cfg)
@@ -1298,8 +1304,6 @@ boost::asio::awaitable<void> FreeGpt::openAi(std::shared_ptr<Channel> ch, nlohma
     boost::system::error_code err{};
     ScopeExit auto_exit{[&] { ch->close(); }};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-
     constexpr std::string_view host = "api.openai.com";
     constexpr std::string_view port = "443";
 
@@ -1336,7 +1340,7 @@ boost::asio::awaitable<void> FreeGpt::openAi(std::shared_ptr<Channel> ch, nlohma
     })";
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
 
-    request["messages"][0]["content"] = prompt;
+    request["messages"] = getConversationJson(json);
     SPDLOG_INFO("{}", request.dump(2));
 
     req.body() = request.dump();
@@ -2371,8 +2375,6 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     boost::system::error_code err{};
     ScopeExit auto_exit{[&] { ch->close(); }};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-
     constexpr std::string_view host = "chat.aivvm.com";
     constexpr std::string_view port = "443";
 
@@ -2420,7 +2422,7 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     })";
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
 
-    request["messages"][0]["content"] = prompt;
+    request["messages"] = getConversationJson(json);
     SPDLOG_INFO("{}", request.dump(2));
 
     req.body() = request.dump();

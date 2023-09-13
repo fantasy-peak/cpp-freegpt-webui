@@ -126,8 +126,7 @@ const ask_gpt = async (message) => {
         meta: {
           id: window.token,
           content: {
-            // conversation: await get_conversation(window.conversation_id),
-            conversation: [],
+            conversation: await get_conversation(window.conversation_id),
             internet_access: document.getElementById("switch").checked,
             content_type: "text",
             parts: [
@@ -343,7 +342,8 @@ const get_conversation = async (conversation_id) => {
   let conversation = await JSON.parse(
     localStorage.getItem(`conversation:${conversation_id}`)
   );
-  return conversation.items;
+  return conversation.items.slice(-4)
+  // return conversation.items;
 };
 
 const add_conversation = async (conversation_id, title) => {
