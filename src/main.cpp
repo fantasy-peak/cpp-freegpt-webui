@@ -300,7 +300,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-CodeLinkAva", FreeGpt::codeLinkAva);
     ADD_METHOD("gpt-4-stream-ChatBase", FreeGpt::chatBase);
     ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
-    ADD_METHOD("gpt-3.5-turbo-stream-Ylokh", FreeGpt::ylokh);
+    ADD_METHOD("gpt-4-stream-Ylokh", FreeGpt::ylokh);
     ADD_METHOD("gpt-3.5-turbo-stream-Vitalentum", FreeGpt::vitalentum);
     // ADD_METHOD("gpt-3.5-turbo-Wuguokai", FreeGpt::wuguokai);
     // ADD_METHOD("gpt-3.5-turbo-stream-GetGpt", FreeGpt::getGpt);

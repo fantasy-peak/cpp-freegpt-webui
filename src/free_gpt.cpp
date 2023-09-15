@@ -2479,7 +2479,7 @@ boost::asio::awaitable<void> FreeGpt::ylokh(std::shared_ptr<Channel> ch, nlohman
                 "content":"hello"
             }
         ],
-        "model": "gpt-3.5-turbo",
+        "model": "gpt-4",
         "temperature":1,
         "presence_penalty":0,
         "top_p":1,
