@@ -742,91 +742,95 @@ create_client:
 }
 
 boost::asio::awaitable<void> FreeGpt::aiTianhu(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    ScopeExit auto_exit{[&] { ch->close(); }};
-    boost::system::error_code err{};
+    boost::asio::post(*m_thread_pool_ptr, [=, this] {
+        ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+        boost::system::error_code err{};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+        auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
-    constexpr std::string_view host = "www.aitianhu.com";
-    constexpr std::string_view port = "443";
-
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
-                                                                     "/api/chat-process", 10};
-    req.set(boost::beast::http::field::host, host);
-    req.set(boost::beast::http::field::user_agent,
-            R"(Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/116.0)");
-    req.set("Accept", "application/json, text/plain, */*");
-    req.set("Accept-Language", "de,en-US;q=0.7,en;q=0.3");
-    req.set(boost::beast::http::field::content_type, "application/json");
-    req.set("Origin", "https://www.aitianhu.com");
-    req.set("Referer", "https://www.aitianhu.com/");
-    req.set("Sec-Fetch-Dest", "empty");
-    req.set("Sec-Fetch-Mode", "cors");
-    req.set("Sec-Fetch-Site", "same-origin");
-    nlohmann::json data{
-        {"prompt", std::format("user: {}\nassistant:", prompt)},
-        {"options", std::unordered_map<std::string, std::string>{}},
-        {"systemMessage",
-         "You are ChatGPT, a large language model trained by OpenAI. Follow "
-         "the user's instructions carefully. Respond using markdown."},
-        {"temperature", 0.8},
-        {"top_p", 1},
-    };
-    req.body() = data.dump();
-    req.prepare_payload();
-
-    int recreate_num{0};
-create_client:
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
-        co_return;
-    }
-    auto& stream_ = client.value();
-
-    auto [ec, count] = co_await boost::beast::http::async_write(stream_, req, use_nothrow_awaitable);
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
-    boost::beast::flat_buffer b;
-    boost::beast::http::response<boost::beast::http::string_body> res;
-    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, b, res, use_nothrow_awaitable);
-    if (ec == boost::beast::http::error::end_of_stream) {
-        if (recreate_num == 0) {
-            recreate_num++;
-            goto create_client;
+        CURLcode res;
+        CURL* curl = curl_easy_init();
+        if (!curl) {
+            auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
+            return;
         }
-    }
-    if (ec) {
-        SPDLOG_ERROR("{}", ec.message());
-        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
-        co_return;
-    }
-    if (boost::beast::http::status::ok != res.result()) {
-        SPDLOG_ERROR("http code: {}", res.result_int());
-        co_await ch->async_send(err, res.reason(), use_nothrow_awaitable);
-        co_return;
-    }
-    auto lines = res.body() | std::views::split('\n') | std::views::transform([](auto&& rng) {
-                     return std::string_view(&*rng.begin(), std::ranges::distance(rng.begin(), rng.end()));
-                 }) |
-                 to<std::vector<std::string_view>>();
-    if (lines.empty()) {
-        SPDLOG_ERROR("lines empty");
-        co_return;
-    }
-    nlohmann::json rsp = nlohmann::json::parse(lines.back(), nullptr, false);
-    if (rsp.is_discarded()) {
-        SPDLOG_ERROR("json parse error");
-        co_await ch->async_send(err, std::format("json parse error: {}", lines.back()), use_nothrow_awaitable);
-        co_return;
-    }
-    co_await ch->async_send(err, rsp.value("text", rsp.dump()), use_nothrow_awaitable);
+        curl_easy_setopt(curl, CURLOPT_URL, "https://www.aitianhu.com/api/chat-process");
+
+        if (!m_cfg.http_proxy.empty())
+            curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+
+        auto cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+            auto recv_data_ptr = static_cast<std::string*>(userp);
+            std::string data{(char*)contents, size * nmemb};
+            recv_data_ptr->append(data);
+            return size * nmemb;
+        };
+        size_t (*fn)(void* contents, size_t size, size_t nmemb, void* userp) = cb;
+
+        std::string recv_data;
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fn);
+        curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &recv_data);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 3L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+
+        constexpr std::string_view json_str = R"({
+            "prompt":"hello",
+            "options":{},
+            "systemMessage":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully.",
+            "temperature":0.8,
+            "top_p":1
+        })";
+        nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+        request["prompt"] = prompt;
+        SPDLOG_INFO("{}", request.dump(2));
+        auto str = request.dump();
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, str.c_str());
+
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+        ScopeExit auto_exit{[=] {
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+        }};
+
+        res = curl_easy_perform(curl);
+
+        if (res != CURLE_OK) {
+            auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
+            return;
+        }
+        int32_t response_code;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if (response_code != 200) {
+            boost::asio::post(ch->get_executor(),
+                              [=] { ch->try_send(err, std::format("aiTianhu http code:{}", response_code)); });
+            return;
+        }
+        auto lines = recv_data | std::views::split('\n') | std::views::transform([](auto&& rng) {
+                         return std::string_view(&*rng.begin(), std::ranges::distance(rng.begin(), rng.end()));
+                     }) |
+                     to<std::vector<std::string_view>>();
+        if (lines.empty()) {
+            SPDLOG_ERROR("lines empty");
+            return;
+        }
+        nlohmann::json rsp = nlohmann::json::parse(lines.back(), nullptr, false);
+        if (rsp.is_discarded()) {
+            SPDLOG_ERROR("json parse error");
+            ch->try_send(err, std::format("json parse error: {}", lines.back()));
+            return;
+        }
+        ch->try_send(err, rsp.value("text", rsp.dump()));
+        return;
+    });
     co_return;
 }
 
