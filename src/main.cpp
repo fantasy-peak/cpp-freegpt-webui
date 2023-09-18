@@ -13,6 +13,7 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/experimental/awaitable_operators.hpp>
 
+#include <curl/curl.h>
 #include <spdlog/spdlog.h>
 #include <inja/inja.hpp>
 
@@ -266,6 +267,9 @@ boost::asio::awaitable<void> doSession(boost::asio::ip::tcp::acceptor& acceptor,
 }
 
 int main(int argc, char** argv) {
+    curl_global_init(CURL_GLOBAL_ALL);
+    ScopeExit cleanup{[=] { curl_global_cleanup(); }};
+
     spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e][thread %t][%!][%s:%#][%l] %v");
     auto [config, error] = yaml_cpp_struct::from_yaml<Config>(argv[1]);
     if (!config) {
@@ -326,7 +330,6 @@ int main(int argc, char** argv) {
         SPDLOG_ERROR("{}", ec.message());
         return EXIT_FAILURE;
     }
-
     boost::asio::co_spawn(context, doSession(acceptor, pool, cfg), boost::asio::detached);
     boost::asio::signal_set sigset(context, SIGINT, SIGTERM);
     std::binary_semaphore smph_signal_main_to_thread{0};
