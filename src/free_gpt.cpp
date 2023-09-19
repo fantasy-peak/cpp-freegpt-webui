@@ -2607,130 +2607,129 @@ boost::asio::awaitable<void> FreeGpt::vitalentum(std::shared_ptr<Channel> ch, nl
 }
 
 boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    boost::asio::post(*m_thread_pool_ptr, [=, this] {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    boost::system::error_code err{};
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    auto get_token_url =
+        std::format("https://gptgo.ai/action_get_token.php?q={}&hlgpt=default&hl=en", urlEncode(prompt));
+    curl_easy_setopt(curl, CURLOPT_URL, get_token_url.c_str());
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+    auto cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
         boost::system::error_code err{};
-        ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+        auto recv_ptr = static_cast<std::string*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        recv_ptr->append(data);
+        return size * nmemb;
+    };
+    std::string recv_str;
+    size_t (*fn)(void* contents, size_t size, size_t nmemb, void* userp) = cb;
+    curlEasySetopt(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &recv_str);
 
-        auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
+    res = curl_easy_perform(curl);
 
-        CURLcode res;
-        CURL* curl = curl_easy_init();
-        if (!curl) {
-            auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
-            return;
-        }
-        auto get_token_url =
-            std::format("https://gptgo.ai/action_get_token.php?q={}&hlgpt=default&hl=en", urlEncode(prompt));
-        curl_easy_setopt(curl, CURLOPT_URL, get_token_url.c_str());
-        if (!m_cfg.http_proxy.empty())
-            curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-        auto cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+    if (res != CURLE_OK) {
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    int32_t response_code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("you http code:{}", response_code));
+        co_return;
+    }
+    SPDLOG_INFO("recv_str: [{}]", recv_str);
+    nlohmann::json line_json = nlohmann::json::parse(recv_str, nullptr, false);
+    if (line_json.is_discarded()) {
+        SPDLOG_ERROR("json parse error: [{}]", recv_str);
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("json parse error:{}", recv_str));
+        co_return;
+    }
+    auto status = line_json["status"].get<bool>();
+    if (!status) {
+        SPDLOG_ERROR("status is false: [{}]", recv_str);
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, recv_str);
+        co_return;
+    }
+    auto token = line_json["token"].get<std::string>();
+    SPDLOG_INFO("token: [{}]", token);
+
+    auto url = std::format("https://gptgo.ai/action_ai_gpt.php?token={}", token);
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+        std::string recv;
+    };
+    Input input{ch};
+    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        boost::system::error_code err{};
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch, recv] = *input_ptr;
+        recv.append(data);
+        while (true) {
+            auto position = recv.find("\n");
+            if (position == std::string::npos)
+                break;
+            auto msg = recv.substr(0, position + 1);
+            recv.erase(0, position + 1);
+            msg.pop_back();
+            if (msg.empty() || !msg.contains("content"))
+                continue;
+            auto fields = splitString(msg, "data: ");
             boost::system::error_code err{};
-            auto recv_ptr = static_cast<std::string*>(userp);
-            std::string data{(char*)contents, size * nmemb};
-            recv_ptr->append(data);
-            return size * nmemb;
-        };
-        std::string recv_str;
-        size_t (*fn)(void* contents, size_t size, size_t nmemb, void* userp) = cb;
-        curlEasySetopt(curl);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fn);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &recv_str);
-
-        ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
-        res = curl_easy_perform(curl);
-
-        if (res != CURLE_OK) {
-            auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
-            return;
-        }
-        int32_t response_code;
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-        if (response_code != 200) {
-            boost::asio::post(ch->get_executor(),
-                              [=] { ch->try_send(err, std::format("you http code:{}", response_code)); });
-            return;
-        }
-        SPDLOG_INFO("recv_str: [{}]", recv_str);
-        nlohmann::json line_json = nlohmann::json::parse(recv_str, nullptr, false);
-        if (line_json.is_discarded()) {
-            SPDLOG_ERROR("json parse error: [{}]", recv_str);
-            boost::asio::post(ch->get_executor(),
-                              [=] { ch->try_send(err, std::format("json parse error:{}", recv_str)); });
-            return;
-        }
-        auto status = line_json["status"].get<bool>();
-        if (!status) {
-            SPDLOG_ERROR("json parse error: [{}]", recv_str);
-            boost::asio::post(ch->get_executor(),
-                              [=] { ch->try_send(err, std::format("json parse error:{}", recv_str)); });
-            return;
-        }
-        auto token = line_json["token"].get<std::string>();
-        SPDLOG_INFO("token: [{}]", token);
-
-        auto url = std::format("https://gptgo.ai/action_ai_gpt.php?token={}", token);
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        if (!m_cfg.http_proxy.empty())
-            curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-
-        struct Input {
-            std::shared_ptr<Channel> ch;
-            std::string recv;
-        };
-        Input input{ch};
-        auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-            boost::system::error_code err{};
-            auto input_ptr = static_cast<Input*>(userp);
-            std::string data{(char*)contents, size * nmemb};
-            auto& [ch, recv] = *input_ptr;
-            recv.append(data);
-            while (true) {
-                auto position = recv.find("\n");
-                if (position == std::string::npos)
-                    break;
-                auto msg = recv.substr(0, position + 1);
-                recv.erase(0, position + 1);
-                msg.pop_back();
-                if (msg.empty() || !msg.contains("content"))
-                    continue;
-                auto fields = splitString(msg, "data: ");
-                boost::system::error_code err{};
-                nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
-                if (line_json.is_discarded()) {
-                    SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                    boost::asio::post(ch->get_executor(), [=] {
-                        ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
-                    });
-                    continue;
-                }
-                auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
-                if (!str.empty() && str != "[DONE]")
-                    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                boost::asio::post(ch->get_executor(),
+                                  [=] { ch->try_send(err, std::format("json parse error: [{}]", fields.back())); });
+                continue;
             }
-            return size * nmemb;
-        };
-        size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
-        curlEasySetopt(curl);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-
-        res = curl_easy_perform(curl);
-
-        if (res != CURLE_OK) {
-            auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
-            return;
+            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+            if (!str.empty() && str != "[DONE]")
+                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
         }
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-        if (response_code != 200) {
-            boost::asio::post(ch->get_executor(),
-                              [=] { ch->try_send(err, std::format("you http code:{}", response_code)); });
-            return;
-        }
-        return;
-    });
+        return size * nmemb;
+    };
+    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
+    curlEasySetopt(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+
+    res = curl_easy_perform(curl);
+
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("you http code:{}", response_code));
+        co_return;
+    }
     co_return;
 }
