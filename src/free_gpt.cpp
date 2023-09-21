@@ -1651,22 +1651,28 @@ boost::asio::awaitable<void> FreeGpt::huggingChat(std::shared_ptr<Channel> ch, n
             auto msg = recv.substr(0, position + 1);
             recv.erase(0, position + 1);
             msg.pop_back();
-            if (msg.empty() || !msg.contains("text"))
+            if (msg.empty())
                 continue;
-            auto fields = splitString(msg, "data:");
             boost::system::error_code err{};
-            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+            nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
             if (line_json.is_discarded()) {
-                SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                SPDLOG_ERROR("json parse error: [{}]", msg);
+                ch->try_send(err, std::format("json parse error: [{}]", msg));
                 continue;
             }
-            if (line_json["token"]["special"].get<bool>())
+            if (!line_json.contains("type")) {
+                SPDLOG_ERROR("invalid json format: [{}]", line_json.dump());
                 continue;
-            auto str = line_json["token"]["text"].get<std::string>();
-            if (!str.empty())
-                ch->try_send(err, str);
+            }
+            auto type = line_json["type"].get<std::string>();
+            if (type == "stream") {
+                if (auto str = line_json["token"].get<std::string>(); !str.empty())
+                    ch->try_send(err, str);
+            } else if (type == "finalAnswer") {
+                ch->close();
+            }
         }
+        return;
     });
     co_return;
 }
