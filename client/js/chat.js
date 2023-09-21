@@ -284,7 +284,7 @@ const delete_conversation = async (conversation_id) => {
 };
 
 const set_conversation = async (conversation_id) => {
-  history.pushState({}, null, `/chat/${conversation_id}`);
+  history.pushState({}, null, `{{chat_path}}/${conversation_id}`);
   window.conversation_id = conversation_id;
 
   await clear_conversation();
@@ -293,7 +293,7 @@ const set_conversation = async (conversation_id) => {
 };
 
 const new_conversation = async () => {
-  history.pushState({}, null, `/chat/`);
+  history.pushState({}, null, `{{chat_path}}/`);
   window.conversation_id = uuid();
 
   await clear_conversation();
@@ -478,7 +478,7 @@ window.onload = async () => {
   }, 1);
 
   if (!window.location.href.endsWith(`#`)) {
-    if (/\/chat\/.+/.test(window.location.href)) {
+    if (/\{{chat_path}}\/.+/.test(window.location.href)) {
       await load_conversation(window.conversation_id);
     }
   }
