@@ -147,24 +147,40 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
             req_path.erase(req_path.find(ASSETS_PATH), ASSETS_PATH.length());
             auto file = std::format("{}{}", cfg.client_root_path, req_path);
             SPDLOG_INFO("load: {}", file);
-            boost::beast::error_code ec;
-            boost::beast::http::file_body::value_type body;
-            body.open(file.c_str(), boost::beast::file_mode::scan, ec);
-            if (ec == boost::beast::errc::no_such_file_or_directory) {
-                co_await sendHttpResponse(stream, request, boost::beast::http::status::not_found);
-                co_return;
+            if (file.contains("chat.js")) {
+                inja::Environment env;
+                nlohmann::json data;
+                data["chat_path"] = cfg.chat_path;
+                auto chat_js_content = env.render_file(file, data);
+                boost::beast::http::response<boost::beast::http::string_body> res{boost::beast::http::status::ok,
+                                                                                  request.version()};
+                res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
+                res.set(boost::beast::http::field::content_type, "text/javascript");
+                res.keep_alive(request.keep_alive());
+                res.body() = std::move(chat_js_content);
+                res.prepare_payload();
+                boost::beast::http::message_generator rsp = std::move(res);
+                co_await boost::beast::async_write(stream, std::move(rsp), use_nothrow_awaitable);
+            } else {
+                boost::beast::error_code ec;
+                boost::beast::http::file_body::value_type body;
+                body.open(file.c_str(), boost::beast::file_mode::scan, ec);
+                if (ec == boost::beast::errc::no_such_file_or_directory) {
+                    co_await sendHttpResponse(stream, request, boost::beast::http::status::not_found);
+                    co_return;
+                }
+                auto const size = body.size();
+                boost::beast::http::response<boost::beast::http::file_body> res{
+                    std::piecewise_construct, std::make_tuple(std::move(body)),
+                    std::make_tuple(boost::beast::http::status::ok, request.version())};
+                res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
+                res.set(boost::beast::http::field::content_type,
+                        req_path.contains("css") ? "text/css" : "text/javascript");
+                res.content_length(size);
+                res.keep_alive(request.keep_alive());
+                boost::beast::http::message_generator rsp = std::move(res);
+                co_await boost::beast::async_write(stream, std::move(rsp), use_nothrow_awaitable);
             }
-            auto const size = body.size();
-            boost::beast::http::response<boost::beast::http::file_body> res{
-                std::piecewise_construct, std::make_tuple(std::move(body)),
-                std::make_tuple(boost::beast::http::status::ok, request.version())};
-            res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-            res.set(boost::beast::http::field::content_type,
-                    req_path.contains("css") ? "text/css" : "text/javascript");
-            res.content_length(size);
-            res.keep_alive(request.keep_alive());
-            boost::beast::http::message_generator rsp = std::move(res);
-            co_await boost::beast::async_write(stream, std::move(rsp), use_nothrow_awaitable);
         } else if (request.target() == API_PATH) {
             std::string model;
             nlohmann::json request_body;
