@@ -411,16 +411,6 @@ create_client:
     co_return std::make_tuple(res, std::move(ctx), std::move(stream_));
 }
 
-size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp) {
-    static_cast<std::string*>(userp)->append((char*)contents, size * nmemb);
-    return size * nmemb;
-}
-
-size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userdata) {
-    static_cast<std::string*>(userdata)->append((char*)buffer, size * nitems);
-    return nitems * size;
-}
-
 void curlEasySetopt(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
@@ -431,45 +421,97 @@ void curlEasySetopt(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
 }
 
-// export CURL_IMPERSONATE=chrome110
-std::tuple<int32_t, std::vector<std::string>, std::string> getCookie(const std::string& url,
-                                                                     const std::string& proxy) {
-    CURL* curl;
-    CURLcode res;
-    std::string read_buffer;
-    std::string buffer;
-    std::vector<std::string> header_data;
-    curl = curl_easy_init();
-    if (curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        if (!proxy.empty())
-            curl_easy_setopt(curl, CURLOPT_PROXY, proxy.c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &read_buffer);
-        curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
-        curl_easy_setopt(curl, CURLOPT_HEADERDATA, &buffer);
-        curlEasySetopt(curl);
-
-        ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
-        res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
-            SPDLOG_ERROR("curl_easy_perform() failed: [{}]", curl_easy_strerror(res));
-            return std::make_tuple(-1, header_data, read_buffer);
-        }
-        int32_t response_code;
-
-        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-
-        header_data = splitString(buffer, "\n");
-        return std::make_tuple(response_code, header_data, read_buffer);
-    }
-    return std::make_tuple(-1, header_data, read_buffer);
-}
-
 auto getConversationJson(const nlohmann::json& json) {
     auto conversation = json.at("meta").at("content").at("conversation");
     conversation.push_back(json.at("meta").at("content").at("parts").at(0));
     return conversation;
+}
+
+struct HttpResponse {
+    int32_t http_response_code;
+    std::vector<std::unordered_multimap<std::string, std::string>> http_header;
+    std::string body;
+};
+
+// export CURL_IMPERSONATE=chrome110
+std::optional<HttpResponse> getCookie(CURL* curl, const std::string& url, const std::string& proxy) {
+    bool auto_clean = curl ? false : true;
+
+    if (!curl) {
+        curl = curl_easy_init();
+        if (!curl) {
+            SPDLOG_ERROR("curl_easy_init() failed");
+            return std::nullopt;
+        }
+    }
+
+    HttpResponse http_response;
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    if (!proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, proxy.c_str());
+
+    auto write_callback = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        static_cast<std::string*>(userp)->append((char*)contents, size * nmemb);
+        return size * nmemb;
+    };
+    size_t (*fn_write_callback)(void* contents, size_t size, size_t nmemb, void* userp) = write_callback;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fn_write_callback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &http_response.body);
+
+    auto header_callback = [](char* buffer, size_t size, size_t nitems, void* userdata) {
+        static_cast<std::string*>(userdata)->append((char*)buffer, size * nitems);
+        return nitems * size;
+    };
+    size_t (*fn_header_callback)(char* buffer, size_t size, size_t nitems, void* userdata) = header_callback;
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, fn_header_callback);
+
+    std::string buffer;
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &buffer);
+    curlEasySetopt(curl);
+
+    ScopeExit auto_exit{[=] {
+        if (auto_clean)
+            curl_easy_cleanup(curl);
+    }};
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        SPDLOG_ERROR("curl_easy_perform() failed: [{}]", curl_easy_strerror(res));
+        return std::nullopt;
+    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_response.http_response_code);
+
+    auto header_data = splitString(buffer, "\n");
+
+    std::unordered_multimap<std::string, std::string> headers;
+    for (auto& str : header_data) {
+        // if (str.ends_with("Connection established\n\n"))
+        //     continue;
+        if (str.size() == 1 && !headers.empty()) {
+            http_response.http_header.emplace_back(std::move(headers));
+            headers.clear();
+            continue;
+        }
+        if (!str.contains(": ")) {
+            auto value = splitString(str, " ");
+            if (value.size() >= 2)
+                headers.emplace("http_response_code", value[1]);
+        } else {
+            auto value = splitString(str, ": ");
+            if (value.size() >= 2)
+                headers.emplace(value[0], value[1]);
+        }
+    }
+    if (!headers.empty()) {
+        http_response.http_header.emplace_back(std::move(headers));
+    }
+    for (auto& value : http_response.http_header) {
+        SPDLOG_INFO("=========================================");
+        for (auto& [k, v] : value)
+            SPDLOG_INFO("{}: {}", k, v);
+    }
+    return http_response;
 }
 
 }  // namespace
@@ -1699,20 +1741,32 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
         SPDLOG_INFO("cookie_queue size: {}", cookie_queue.size());
         if (cookie_queue.empty()) {
             lk.unlock();
-            auto [http_code, header, body] = getCookie("https://you.com", m_cfg.http_proxy);
-            SPDLOG_INFO("http_code: {}", http_code);
+            auto cookie_opt = getCookie(nullptr, "https://you.com", m_cfg.http_proxy);
+            if (!cookie_opt) {
+                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "get cookie error!!!"); });
+                return;
+            }
+            auto& [http_response_code, http_header, body] = cookie_opt.value();
+            if (!cookie_opt) {
+                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "http header is empty!!!"); });
+                return;
+            }
+            SPDLOG_INFO("http_response_code: {}", http_response_code);
             std::string cookie;
-            for (auto& data : header) {
-                if (data.starts_with("set-cookie: __cf_bm")) {
-                    auto fields = splitString(data, " ");
+
+            auto range = http_header.back().equal_range("set-cookie");
+            for (auto it = range.first; it != range.second; ++it) {
+                if (it->second.contains("__cf_bm=")) {
+                    auto fields = splitString(it->second, " ");
                     if (fields.size() < 1) {
                         boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "can't get cookie"); });
                         return;
                     }
-                    cookie = std::move(fields[1]);
+                    cookie = std::move(fields[0]);
                     break;
                 }
             }
+
             if (cookie.empty()) {
                 boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, "cookie is empty"); });
                 return;
@@ -1725,12 +1779,9 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
         }
         SPDLOG_INFO("cookie: {}", std::get<1>(cookie_cache));
 
-        CURL* curl;
-        CURLcode res;
-
-        curl = curl_easy_init();
+        CURL* curl = curl_easy_init();
         if (!curl) {
-            auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+            auto error_info = std::format("curl_easy_init() failed");
             boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
             return;
         }
@@ -1779,7 +1830,7 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
             curl_easy_cleanup(curl);
         }};
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        res = curl_easy_perform(curl);
+        CURLcode res = curl_easy_perform(curl);
 
         if (res != CURLE_OK) {
             auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
@@ -2230,6 +2281,7 @@ boost::asio::awaitable<void> FreeGpt::vitalentum(std::shared_ptr<Channel> ch, nl
 
 boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+
     boost::system::error_code err{};
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
