@@ -336,7 +336,7 @@ int main(int argc, char** argv) {
 
     acceptor.set_option(boost::asio::ip::tcp::acceptor::reuse_address(true));
     acceptor.bind(endpoint);
-    SPDLOG_INFO("server start accept at {} ...", endpoint.address().to_string());
+    SPDLOG_INFO("server start accept at {}:{} ...", endpoint.address().to_string(), cfg.port);
     acceptor.listen(boost::asio::socket_base::max_listen_connections, ec);
     if (ec) {
         SPDLOG_ERROR("{}", ec.message());
