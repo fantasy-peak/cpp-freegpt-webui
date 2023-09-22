@@ -659,7 +659,7 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
     constexpr std::string_view port{"443"};
 
     boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
-                                                                     "/make_me_a_pizza", 11};
+                                                                     "/make_me_a_sandwich", 11};
     req.set(boost::beast::http::field::host, host);
     req.set(boost::beast::http::field::user_agent, user_agent);
     req.set("Api-Key", api_key);
