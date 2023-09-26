@@ -19,6 +19,7 @@ public:
     FreeGpt(Config&);
 
     boost::asio::awaitable<void> aiTianhu(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> aiTianhuSpace(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> deepAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aiChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptAi(std::shared_ptr<Channel>, nlohmann::json);
