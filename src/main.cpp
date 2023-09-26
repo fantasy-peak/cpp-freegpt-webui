@@ -325,7 +325,9 @@ int main(int argc, char** argv) {
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();
-    auto& context = pool.getIoContext();
+    IoContextPool accept_pool{1};
+    accept_pool.start();
+    auto& context = accept_pool.getIoContext();
     boost::asio::ip::tcp::acceptor acceptor(context);
 
     boost::asio::ip::tcp::resolver resolver(context);
@@ -351,6 +353,7 @@ int main(int argc, char** argv) {
     });
     smph_signal_main_to_thread.acquire();
     SPDLOG_INFO("stoped ...");
+    accept_pool.stop();
     pool.stop();
     return EXIT_SUCCESS;
 }
