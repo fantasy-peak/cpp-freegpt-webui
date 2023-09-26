@@ -323,6 +323,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-Vitalentum", FreeGpt::vitalentum);
     ADD_METHOD("gpt-3.5-turbo-stream-GptGo", FreeGpt::gptGo);
     ADD_METHOD("gpt-3.5-turbo-stream-AItianhuSpace", FreeGpt::aiTianhuSpace);
+    ADD_METHOD("gpt-3.5-turbo-stream-Aibn", FreeGpt::aibn);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();
