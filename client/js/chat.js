@@ -478,7 +478,7 @@ window.onload = async () => {
   }, 1);
 
   if (!window.location.href.endsWith(`#`)) {
-    if (/\{{chat_path}}\/.+/.test(window.location.href)) {
+    if (/{{chat_path}}\/.+/.test(window.location.href)) {
       await load_conversation(window.conversation_id);
     }
   }
