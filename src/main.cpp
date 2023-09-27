@@ -2,6 +2,7 @@
 
 #include <format>
 #include <functional>
+#include <regex>
 #include <semaphore>
 #include <string>
 
@@ -38,8 +39,11 @@ void setEnvironment(auto& cfg) {
         if (!upper_http_proxy.empty())
             cfg.http_proxy = std::move(upper_http_proxy);
     }
-    if (auto [chat_path] = getEnv("CHAT_PATH"); !chat_path.empty())
+    if (auto [chat_path] = getEnv("CHAT_PATH"); !chat_path.empty()) {
         cfg.chat_path = std::move(chat_path);
+    }
+    if (cfg.chat_path.back() == '/')
+        cfg.chat_path.pop_back();
     if (auto [port] = getEnv("PORT"); !port.empty())
         cfg.port = std::move(port);
     if (auto [host] = getEnv("HOST"); !host.empty())
@@ -67,6 +71,7 @@ std::string createIndexHtml(const std::string& file, const Config& cfg) {
     inja::Environment env;
     nlohmann::json data;
     data["chat_id"] = createUuidString();
+    data["chat_path"] = cfg.chat_path;
     if (!cfg.providers.empty()) {
         data["model_list"] = cfg.providers;
     } else {
@@ -113,6 +118,8 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
         co_await boost::beast::async_write(stream, std::move(rsp), use_nothrow_awaitable);
         co_return;
     }
+    auto assets_path = std::format("{}{}", cfg.chat_path, ASSETS_PATH);
+    SPDLOG_INFO("assets_path: [{}]", assets_path);
     while (true) {
         boost::beast::flat_buffer buffer;
         boost::beast::http::request<boost::beast::http::string_body> request;
@@ -142,15 +149,25 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
             res.prepare_payload();
             boost::beast::http::message_generator rsp = std::move(res);
             co_await boost::beast::async_write(stream, std::move(rsp), use_nothrow_awaitable);
-        } else if (request.target().starts_with(ASSETS_PATH)) {
+        } else if (request.target().starts_with(assets_path)) {
             std::string req_path{request.target()};
-            req_path.erase(req_path.find(ASSETS_PATH), ASSETS_PATH.length());
+            SPDLOG_INFO("req_path: {}", req_path);
+            req_path.erase(req_path.find(assets_path), assets_path.length());
             auto file = std::format("{}{}", cfg.client_root_path, req_path);
             SPDLOG_INFO("load: {}", file);
-            if (file.contains("chat.js")) {
+            if (file.contains("chat.js") || file.contains("site.webmanifest")) {
                 inja::Environment env;
                 nlohmann::json data;
-                data["chat_path"] = cfg.chat_path;
+                if (file.contains("chat.js")) {
+                    auto format_string = [](const std::string& str) {
+                        std::regex pattern("/");
+                        std::string replacement = "\\/";
+                        return std::regex_replace(str, pattern, replacement);
+                    };
+                    data["chat_path"] = format_string(cfg.chat_path);
+                } else {
+                    data["chat_path"] = cfg.chat_path;
+                }
                 auto chat_js_content = env.render_file(file, data);
                 boost::beast::http::response<boost::beast::http::string_body> res{boost::beast::http::status::ok,
                                                                                   request.version()};
