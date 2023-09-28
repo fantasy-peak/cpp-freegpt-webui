@@ -40,7 +40,7 @@ export LIBRARY_PATH=/usr/lib64:$LIBRARY_PATH
 4. Compiling
 git clone https://github.com/fantasy-peak/cpp-freegpt-webui.git
 cd cpp-freegpt-webui
-xmake build -v
+xmake build -v -y
 xmake install -o .
 cd bin
 ./cpp-freegpt-webui ../cfg/cpp-free-gpt.yml
@@ -59,9 +59,9 @@ docker pull fantasypeak/freegpt:latest
 
 Run the application using Docker:
 ```
-docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
-// OR
 docker run -p 8858:8858 -it --name freegpt fantasypeak/freegpt:latest
+// OR
+docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
 // use http_proxy
 docker run -p 8858:8858 -it --name freegpt -e HTTP_PROXY=http://127.0.0.1:8080 -e CHAT_PATH=/chat fantasypeak/freegpt:latest
 // set active providers
