@@ -2116,8 +2116,6 @@ boost::asio::awaitable<void> FreeGpt::ylokh(std::shared_ptr<Channel> ch, nlohman
     boost::system::error_code err{};
     ScopeExit auto_exit{[&] { ch->close(); }};
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-
     constexpr std::string_view host = "chatapi.ylokh.xyz";
     constexpr std::string_view port = "443";
 
@@ -2153,10 +2151,6 @@ boost::asio::awaitable<void> FreeGpt::ylokh(std::shared_ptr<Channel> ch, nlohman
             {
                 "role":"system",
                 "content":"Carefully heed the user's instructions and follow the user's will to the best of your ability.\nRespond using Markdown."
-            },
-            {
-                "role":"user",
-                "content":"hello"
             }
         ],
         "model":"gpt-3.5-turbo-16k",
@@ -2169,7 +2163,10 @@ boost::asio::awaitable<void> FreeGpt::ylokh(std::shared_ptr<Channel> ch, nlohman
     })";
     nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
 
-    request["messages"][1]["content"] = prompt;
+    auto conversation = getConversationJson(json);
+    for (const auto& item : conversation)
+        request["messages"].push_back(item);
+
     SPDLOG_INFO("{}", request.dump(2));
 
     req.body() = request.dump();
@@ -2595,7 +2592,7 @@ boost::asio::awaitable<void> FreeGpt::aibn(std::shared_ptr<Channel> ch, nlohmann
 
     request["sign"] = signature;
     request["time"] = timestamp;
-    request["messages"][0]["content"] = prompt;
+    request["messages"] = getConversationJson(json);
 
     auto str = request.dump();
     SPDLOG_INFO("request : [{}]", str);
