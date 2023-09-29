@@ -92,6 +92,18 @@ boost::asio::awaitable<void> sendHttpResponse(auto& stream, auto& request, auto 
     co_return;
 }
 
+void setContentType(auto& res, const std::string& file) {
+    SPDLOG_INFO("file: {}", file);
+    if (file.ends_with("js")) {
+        res.set(boost::beast::http::field::content_type, "text/javascript");
+    } else if (file.ends_with("css")) {
+        res.set(boost::beast::http::field::content_type, "text/css");
+    } else if (file.ends_with("png")) {
+        res.set(boost::beast::http::field::content_type, "image/png");
+    } else
+        SPDLOG_ERROR("invalid file type: {}", file);
+}
+
 boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Config& cfg,
                                           boost::asio::io_context& context) {
     boost::beast::tcp_stream stream{std::move(sock)};
@@ -172,7 +184,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                 boost::beast::http::response<boost::beast::http::string_body> res{boost::beast::http::status::ok,
                                                                                   request.version()};
                 res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-                res.set(boost::beast::http::field::content_type, "text/javascript");
+                setContentType(res, file);
                 res.keep_alive(request.keep_alive());
                 res.body() = std::move(chat_js_content);
                 res.prepare_payload();
@@ -191,8 +203,7 @@ boost::asio::awaitable<void> startSession(boost::asio::ip::tcp::socket sock, Con
                     std::piecewise_construct, std::make_tuple(std::move(body)),
                     std::make_tuple(boost::beast::http::status::ok, request.version())};
                 res.set(boost::beast::http::field::server, BOOST_BEAST_VERSION_STRING);
-                res.set(boost::beast::http::field::content_type,
-                        req_path.contains("css") ? "text/css" : "text/javascript");
+                setContentType(res, file);
                 res.content_length(size);
                 res.keep_alive(request.keep_alive());
                 boost::beast::http::message_generator rsp = std::move(res);
