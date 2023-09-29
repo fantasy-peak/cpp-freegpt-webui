@@ -43,27 +43,34 @@ jobs:
           xmake install -o .
           ldd ./bin/cpp-freegpt-webui
 
-      - name: Docker login
-        if: github.ref_name == 'dev' || github.ref_name == 'main'
-        uses: docker/login-action@v1
+      - name: Docker login for dev
+        if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Docker login for main
+        if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
+        uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
       - name: Build the Docker image to dev
-        if: github.ref_name == 'dev'
+        if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
         run: |
           docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
 
       - name: Build the Docker image to main
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
         run: |
           docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
 
       - name: Docker image push to dev
-        if: github.ref_name == 'dev'
+        if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
         run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
 
       - name: Docker image push main
-        if: github.ref_name == 'main'
+        if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
         run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
