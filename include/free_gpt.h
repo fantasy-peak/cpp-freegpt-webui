@@ -39,6 +39,8 @@ public:
     boost::asio::awaitable<void> gptGo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aibn(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptDuo(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> chatForAi(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> freeGpt(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
