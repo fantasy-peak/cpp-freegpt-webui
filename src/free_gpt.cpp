@@ -1606,7 +1606,7 @@ boost::asio::awaitable<void> FreeGpt::huggingChat(std::shared_ptr<Channel> ch, n
     req_init_conversation.set(boost::beast::http::field::user_agent, user_agent);
     req_init_conversation.set("Accept", "*/*");
     req_init_conversation.set("Content-Type", "application/json");
-    req_init_conversation.body() = R"({"model": "OpenAssistant/oasst-sft-6-llama-30b-xor"})";
+    req_init_conversation.body() = R"({"model": "meta-llama/Llama-2-70b-chat-hf"})";
     req_init_conversation.prepare_payload();
 
     auto [ec, count] = co_await boost::beast::http::async_write(stream_, req_init_conversation, use_nothrow_awaitable);
