@@ -23,7 +23,6 @@ public:
     boost::asio::awaitable<void> deepAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aiChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> weWordle(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> acytoo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> openAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> h2o(std::shared_ptr<Channel>, nlohmann::json);
@@ -31,7 +30,6 @@ public:
     boost::asio::awaitable<void> huggingChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> you(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> binjie(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> codeLinkAva(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatBase(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aivvm(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> ylokh(std::shared_ptr<Channel>, nlohmann::json);
