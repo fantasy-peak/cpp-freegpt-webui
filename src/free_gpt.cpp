@@ -641,11 +641,15 @@ FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host,
 }
 
 boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    ScopeExit auto_exit{[&] { ch->close(); }};
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+
     boost::system::error_code err{};
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     std::string user_agent{
-        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36)"};
+
     std::random_device rd;
     std::mt19937 mt(rd());
     std::uniform_int_distribution<uint64_t> dist(0, 100000000);
@@ -654,19 +658,39 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
     auto api_key = std::format("tryit-{}-{}", part1, part2);
 
     constexpr char CRLF[] = "\r\n";
-    constexpr char MULTI_PART_BOUNDARY[] = "9bc627aea4f77e150e6057f78036e73f";
-    constexpr std::string_view host{"api.deepai.org"};
-    constexpr std::string_view port{"443"};
+    static std::string MULTI_PART_BOUNDARY = "9bc627aea4f77e150e6057f78036e73f";
 
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post,
-                                                                     "/make_me_a_sandwich", 11};
-    req.set(boost::beast::http::field::host, host);
-    req.set(boost::beast::http::field::user_agent, user_agent);
-    req.set("Api-Key", api_key);
-    req.set(boost::beast::http::field::content_type,
-            std::format("multipart/form-data; boundary={}", MULTI_PART_BOUNDARY));
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_setopt(curl, CURLOPT_URL, "https://api.deepai.org/hacking_is_a_crime");
 
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+        std::string recv;
+    };
+    Input input{ch};
+    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        boost::system::error_code err{};
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch, recv] = *input_ptr;
+        boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, data); });
+        return size * nmemb;
+    };
+    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
+    curlEasySetopt(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+
     nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
 
     std::ostringstream payload;
@@ -674,30 +698,37 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
             << CRLF << "chat" << CRLF << "--" << MULTI_PART_BOUNDARY << CRLF
             << R"(Content-Disposition: form-data; name="chatHistory")" << CRLF << CRLF << request_json.dump() << CRLF
             << "--" << MULTI_PART_BOUNDARY << "--" << CRLF;
-
     SPDLOG_INFO("{}", payload.str());
-    req.body() = payload.str();
-    req.prepare_payload();
+    auto str = payload.str();
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, str.c_str());
 
-    int recreate_num{0};
-create_client:
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+    struct curl_slist* headers = nullptr;
+    auto content_type_str = std::format("Content-Type: multipart/form-data; boundary={}", MULTI_PART_BOUNDARY);
+    SPDLOG_INFO("content_type_str: {}", content_type_str);
+    headers = curl_slist_append(headers, content_type_str.c_str());
+    auto api_key_str = std::format("api-key: {}", api_key);
+    headers = curl_slist_append(headers, api_key_str.c_str());
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    ScopeExit auto_exit{[=] {
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }};
+
+    res = curl_easy_perform(curl);
+
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
         co_return;
     }
-    auto& stream_ = client.value();
-
-    auto ret = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string recv_str) {
-        boost::system::error_code ec{};
-        ch->try_send(ec, recv_str);
-    });
-    if (ret == Status::Close && recreate_num == 0) {
-        recreate_num++;
-        goto create_client;
+    int32_t response_code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("deepai http code:{}", response_code));
+        co_return;
     }
     co_return;
 }
