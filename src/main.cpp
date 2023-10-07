@@ -350,6 +350,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-ChatgptDuo", FreeGpt::chatGptDuo);
     ADD_METHOD("gpt-3.5-turbo-stream-FreeGpt", FreeGpt::freeGpt);
     ADD_METHOD("gpt-3.5-turbo-stream-Cromicle", FreeGpt::cromicle);
+    ADD_METHOD("gpt-4-stream-Chatgpt4Online", FreeGpt::chatGpt4Online);
     // ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
     // ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
     // ADD_METHOD("gpt-3.5-turbo-stream-AItianhuSpace", FreeGpt::aiTianhuSpace);
