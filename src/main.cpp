@@ -333,27 +333,28 @@ int main(int argc, char** argv) {
 
     if (!cfg.api_key.empty())
         ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
-    ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
+
     ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
-    ADD_METHOD("gpt-3.5-turbo-acytoo", FreeGpt::acytoo);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
     ADD_METHOD("gpt-3.5-turbo-stream-H2o", FreeGpt::h2o);
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
     ADD_METHOD("gpt-OpenAssistant-stream-HuggingChat", FreeGpt::huggingChat)
     ADD_METHOD("gpt-4-turbo-stream-you", FreeGpt::you);
-    // ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
     ADD_METHOD("gpt-3-stream-binjie", FreeGpt::binjie);
     ADD_METHOD("gpt-4-stream-ChatBase", FreeGpt::chatBase);
     ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
     ADD_METHOD("gpt-3.5-turbo-16k-stream-Ylokh", FreeGpt::ylokh);
     ADD_METHOD("gpt-3.5-turbo-stream-Vitalentum", FreeGpt::vitalentum);
     ADD_METHOD("gpt-3.5-turbo-stream-GptGo", FreeGpt::gptGo);
-    // ADD_METHOD("gpt-3.5-turbo-stream-AItianhuSpace", FreeGpt::aiTianhuSpace);
     ADD_METHOD("gpt-3.5-turbo-stream-Aibn", FreeGpt::aibn);
     ADD_METHOD("gpt-3.5-turbo-ChatgptDuo", FreeGpt::chatGptDuo);
-    ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
     ADD_METHOD("gpt-3.5-turbo-stream-FreeGpt", FreeGpt::freeGpt);
     ADD_METHOD("gpt-3.5-turbo-stream-Cromicle", FreeGpt::cromicle);
+    // ADD_METHOD("gpt-3.5-turbo-Aichat", FreeGpt::aiChat);
+    // ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
+    // ADD_METHOD("gpt-3.5-turbo-stream-AItianhuSpace", FreeGpt::aiTianhuSpace);
+    // ADD_METHOD("gpt-3.5-turbo-AItianhu", FreeGpt::aiTianhu);
+    // ADD_METHOD("gpt-3.5-turbo-acytoo", FreeGpt::acytoo);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();
