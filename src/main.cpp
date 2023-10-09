@@ -351,7 +351,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-FreeGpt", FreeGpt::freeGpt);
     ADD_METHOD("gpt-4-stream-Chatgpt4Online", FreeGpt::chatGpt4Online);
     ADD_METHOD("gpt-3.5-turbo-stream-gptalk", FreeGpt::gptalk);
-    // ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
+    ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();

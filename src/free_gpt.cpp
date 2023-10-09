@@ -2238,27 +2238,8 @@ boost::asio::awaitable<void> FreeGpt::chatForAi(std::shared_ptr<Channel> ch, nlo
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
 
-    auto generate_signature = [](int timestamp, const std::string& conversation_id, const std::string& message) {
-        std::stringstream ss;
-        ss << timestamp << ":" << conversation_id << ":" << message << ":6B46K4pt";
-        std::string data = ss.str();
-
-        unsigned char digest[SHA256_DIGEST_LENGTH];
-        SHA256(reinterpret_cast<const unsigned char*>(data.c_str()), data.length(), digest);
-
-        std::stringstream sha_stream;
-        for (int i = 0; i < SHA256_DIGEST_LENGTH; i++) {
-            sha_stream << std::setfill('0') << std::setw(2) << std::hex << static_cast<int>(digest[i]);
-        }
-        return sha_stream.str();
-    };
-    uint64_t timestamp =
-        std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    auto onversation_id = std::format("id_{}", timestamp);
-    std::string signature = generate_signature(timestamp, onversation_id, prompt);
-
     constexpr std::string_view request_str{R"({
-        "conversationId": "id_1696338587",
+        "conversationId": "temp",
         "conversationType": "chat_continuous",
         "botId": "chat_continuous",
         "globalSettings": {
@@ -2267,23 +2248,19 @@ boost::asio::awaitable<void> FreeGpt::chatForAi(std::shared_ptr<Channel> ch, nlo
             "messageHistorySize": 5,
             "temperature": 0.7,
             "top_p": 1,
-            "stream": true
+            "stream": false
         },
         "botSettings": {},
         "prompt": "hello",
         "messages": [{
             "role": "user",
             "content": "hello"
-        }],
-        "sign": "1505ec882d72d5f3175a74ac84d665b1b904e6671b2e7334268f540975929a26",
-        "timestamp": 1696338587
+        }]
     })"};
     nlohmann::json request = nlohmann::json::parse(request_str, nullptr, false);
 
-    request["sign"] = signature;
-    request["conversationId"] = onversation_id;
     request["messages"] = getConversationJson(json);
-    request["timestamp"] = timestamp;
+    request["prompt"] = prompt;
 
     auto str = request.dump();
     SPDLOG_INFO("request : [{}]", str);

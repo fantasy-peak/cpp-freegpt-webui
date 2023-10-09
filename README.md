@@ -7,15 +7,22 @@
 This project features a WebUI utilizing the [G4F API](https://github.com/xtekky/gpt4free). <br>
 Experience the power of ChatGPT with a user-friendly interface, enhanced jailbreaks, and completely free.
 
+
+## Support this repository:
+
+-   ⭐ **Star the project:** Star this and the [cpp-freegpt-webui repository](https://github.com/fantasy-peak/cpp-freegpt-webui.git). It means a lot to me! 💕
+
+
 ## Getting Started :white_check_mark:  
 To get started with this project, you'll need to clone the repository and have g++ >= 13.1 installed on your system.
-  
+
 ### Cloning the Repository :inbox_tray:
 Run the following command to clone the repository:  
 
 ```
 git clone https://github.com/fantasy-peak/cpp-freegpt-webui.git
 ```
+
 
 ## Compile And Running the Application :rocket:
 To run the application, run the following command:
@@ -83,6 +90,12 @@ The application interface was incorporated from the [chatgpt-clone](https://gith
 
 ### API G4F
 The free GPT-4 API was incorporated from the [GPT4Free](https://github.com/xtekky/gpt4free) repository.
+
+
+## Star History Chart:
+
+[![Star History Chart](https://api.star-history.com/svg?repos=fantasy-peak/cpp-freegpt-webui&theme=light)](https://github.com/fantasy-peak/cpp-freegpt-webui/stargazers)
+
 
 ## Legal Notice
 This repository is _not_ associated with or endorsed by providers of the APIs contained in this GitHub repository. This
