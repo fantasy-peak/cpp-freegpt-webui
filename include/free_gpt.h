@@ -18,12 +18,8 @@ public:
 
     FreeGpt(Config&);
 
-    boost::asio::awaitable<void> aiTianhu(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> aiTianhuSpace(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> deepAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> aiChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> acytoo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> openAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> h2o(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> yqcloud(std::shared_ptr<Channel>, nlohmann::json);
@@ -39,7 +35,6 @@ public:
     boost::asio::awaitable<void> chatGptDuo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatForAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> freeGpt(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> cromicle(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGpt4Online(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptalk(std::shared_ptr<Channel>, nlohmann::json);
 
