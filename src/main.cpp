@@ -65,6 +65,8 @@ void setEnvironment(auto& cfg) {
         if (!ip_white_list.is_discarded())
             cfg.ip_white_list = ip_white_list.get<std::vector<std::string>>();
     }
+    if (auto [zeus] = getEnv("ZEUS"); !zeus.empty())
+        cfg.zeus = std::move(zeus);
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
@@ -324,10 +326,6 @@ int main(int argc, char** argv) {
 
     setEnvironment(cfg);
     auto [yaml_cfg_str, _] = yaml_cpp_struct::to_yaml(cfg);
-    SPDLOG_INFO("\n{}", yaml_cpp_struct::yaml_to_json(yaml_cfg_str.value()).dump(2));
-    std::cout << "\033[32m"
-              << "GitHub: https://github.com/fantasy-peak/cpp-freegpt-webui"
-              << "\033[0m" << std::endl;
 
     FreeGpt app{cfg};
 
@@ -352,6 +350,16 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-4-stream-Chatgpt4Online", FreeGpt::chatGpt4Online);
     ADD_METHOD("gpt-3.5-turbo-stream-gptalk", FreeGpt::gptalk);
     ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
+    ADD_METHOD("gpt-3.5-turbo-stream-gptforlove", FreeGpt::gptForLove);
+
+    SPDLOG_INFO("active provider:");
+    for (auto& [provider, _] : gpt_function)
+        SPDLOG_INFO("      {}", provider);
+
+    SPDLOG_INFO("\n{}", yaml_cpp_struct::yaml_to_json(yaml_cfg_str.value()).dump(2));
+    std::cout << "\033[32m"
+              << "GitHub: https://github.com/fantasy-peak/cpp-freegpt-webui"
+              << "\033[0m" << std::endl;
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();

@@ -61,16 +61,26 @@ jobs:
         if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
         run: |
           docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
+          cd tools
+          docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:dev
+          cd ..
 
       - name: Build the Docker image to main
         if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
         run: |
           docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
+          cd tools
+          docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:latest
+          cd ..
 
       - name: Docker image push to dev
         if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:dev
 
       - name: Docker image push main
         if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
-        run: docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:latest

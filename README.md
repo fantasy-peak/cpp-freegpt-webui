@@ -10,8 +10,7 @@ Experience the power of ChatGPT with a user-friendly interface, enhanced jailbre
 
 ## Support this repository:
 
--   ⭐ **Star the project:** Star this and the [cpp-freegpt-webui repository](https://github.com/fantasy-peak/cpp-freegpt-webui.git). It means a lot to me! 💕
-
+-   ⭐ **Star the project:** Star this. It means a lot to me! 💕
 
 ## Getting Started :white_check_mark:  
 To get started with this project, you'll need to clone the repository and have g++ >= 13.1 installed on your system.
@@ -22,7 +21,6 @@ Run the following command to clone the repository:
 ```
 git clone https://github.com/fantasy-peak/cpp-freegpt-webui.git
 ```
-
 
 ## Compile And Running the Application :rocket:
 To run the application, run the following command:
@@ -77,6 +75,16 @@ docker run -p 8858:8858 -it --name freegpt -e CHAT_PATH=/chat -e PROVIDERS="[\"g
 docker run -p 8858:8858 -it --name freegpt -e IP_WHITE_LIST="[\"127.0.0.1\",\"192.168.1.1\"]" fantasypeak/freegpt:latest
 ```
 
+### Start the Zeus Service
+Zeus is a cpp-freegpt-webui auxiliary service, because some provider needs to perform specific operations such as get cookies and refreshing web pages etc.
+If you need to use these specific providers, you need to start it(Zeus Docker)
+```
+docker pull fantasypeak/freegpt-zeus:latest
+docker run -p 8860:8860 -it --name zeus fantasypeak/freegpt-zeus:latest
+docker pull fantasypeak/freegpt:latest
+docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
+```
+
 ### Call OpenAi Api
 ```
 // It supports calling OpenAI's API, but need set API_KEY
@@ -91,11 +99,9 @@ The application interface was incorporated from the [chatgpt-clone](https://gith
 ### API G4F
 The free GPT-4 API was incorporated from the [GPT4Free](https://github.com/xtekky/gpt4free) repository.
 
-
 ## Star History Chart:
 
 [![Star History Chart](https://api.star-history.com/svg?repos=fantasy-peak/cpp-freegpt-webui&theme=light)](https://github.com/fantasy-peak/cpp-freegpt-webui/stargazers)
-
 
 ## Legal Notice
 This repository is _not_ associated with or endorsed by providers of the APIs contained in this GitHub repository. This
