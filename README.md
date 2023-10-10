@@ -80,7 +80,7 @@ Zeus is a cpp-freegpt-webui auxiliary service, because some provider needs to pe
 If you need to use these specific providers, you need to start it(Zeus Docker)
 ```
 docker pull fantasypeak/freegpt-zeus:latest
-docker run -p 8860:8860 -it --name zeus fantasypeak/freegpt-zeus:latest
+docker run --net=host -it --name zeus fantasypeak/freegpt-zeus:latest
 docker pull fantasypeak/freegpt:latest
 docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
 ```
