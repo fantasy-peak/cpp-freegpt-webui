@@ -1,5 +1,36 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400;500;600;700;800;900&display=swap");
 
+.adsbox {
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    background-color: var(--blur-bg);
+    height: 100%;
+    width: 100%;
+    border-radius: var(--border-radius-1);
+    border: 1px solid var(--blur-border);
+}
+
+.ads {
+    align-items: center;
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    max-width: 200px;
+    padding: var(--section-gap);
+    overflow: none;
+    flex-shrink: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+}
+ 
+@media screen and (max-width: 728px) {
+    .ads {
+        display: none;
+    }
+}
+
 /* :root {
     --colour-1: #ffffff;
     --colour-2: #000000;
@@ -28,6 +59,7 @@
     --blur-border: #84719040;
     --user-input: #ac87bb;
     --conversations: #c7a2ff;
+    --conversations-hover: #c7a2ff4d;
 }
 
 :root {
@@ -54,7 +86,7 @@ body {
     padding: var(--section-gap);
     background: var(--colour-1);
     color: var(--colour-3);
-    min-height: 100vh;
+    height: 100vh;
 }
 
 .row {
@@ -85,10 +117,6 @@ body {
 
 .conversation {
     width: 100%;
-    min-height: 50%;
-    height: 100vh;
-    overflow-y: scroll;
-    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     gap: 15px;
@@ -96,16 +124,16 @@ body {
 
 .conversation #messages {
     width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
+    overflow: auto;
     overflow-wrap: break-word;
-    overflow-y: inherit;
-    overflow-x: hidden;
     padding-bottom: 50px;
 }
 
 .conversation .user-input {
-    max-height: 10vh;
+    max-height: 200px;
 }
 
 .conversation .user-input input {
@@ -150,8 +178,6 @@ body {
     display: flex;
     flex-direction: column;
     gap: 16px;
-    flex: auto;
-    min-width: 0;
 }
 
 .conversations .title {
@@ -162,10 +188,12 @@ body {
 .conversations .convo {
     padding: 8px 12px;
     display: flex;
-    gap: 18px;
+    gap: 10px;
     align-items: center;
     user-select: none;
     justify-content: space-between;
+    border: 1px dashed var(--conversations);
+    border-radius: var(--border-radius-1);
 }
 
 .conversations .convo .left {
@@ -173,8 +201,6 @@ body {
     display: flex;
     align-items: center;
     gap: 10px;
-    flex: auto;
-    min-width: 0;
 }
 
 .conversations i {
@@ -185,8 +211,6 @@ body {
 .convo-title {
     color: var(--colour-3);
     font-size: 14px;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .message {
@@ -240,7 +264,6 @@ body {
     display: flex;
     flex-direction: column;
     gap: 18px;
-    min-width: 0;
 }
 
 .message .content p,
@@ -265,8 +288,13 @@ body {
     cursor: pointer;
     user-select: none;
     background: transparent;
-    border: 1px dashed var(--conversations);
+    border: 1px solid var(--conversations);
     border-radius: var(--border-radius-1);
+    transition: all 0.2s ease;
+}
+
+.new_convo:hover {
+    box-shadow: inset 0px 0px 20px var(--conversations-hover);
 }
 
 .new_convo span {
@@ -274,9 +302,6 @@ body {
     font-size: 14px;
 }
 
-.new_convo:hover {
-    border-style: solid;
-}
 
 .stop_generating {
     position: absolute;
@@ -388,9 +413,8 @@ input:checked+label:after {
 }
 
 .buttons {
-    min-height: 10vh;
     display: flex;
-    align-items: start;
+    align-items: center;
     justify-content: left;
     width: 100%;
 }
@@ -408,15 +432,6 @@ input:checked+label:after {
     color: var(--colour-3);
 }
 
-.disable-scrollbars::-webkit-scrollbar {
-  background: transparent; /* Chrome/Safari/Webkit */
-  width: 0px;
-}
-    
-.disable-scrollbars {
-  scrollbar-width: none; /* Firefox */
-  -ms-overflow-style: none;  /* IE 10+ */
-}
 
 select {
     -webkit-border-radius: 8px;
@@ -474,7 +489,7 @@ select {
     cursor: pointer;
     user-select: none;
     background: transparent;
-    border: 1px solid #c7a2ff;
+    border: 1px solid var(--conversations);
     border-radius: var(--border-radius-1);
     width: 100%;
 }
@@ -490,6 +505,7 @@ select {
     gap: 16px;
     overflow: auto;
 }
+
 
 #cursor {
     line-height: 17px;
@@ -597,16 +613,14 @@ ul {
     }
 
     .buttons {
-    flex-wrap: wrap;
-    gap: 5px;
-    padding-bottom: 10vh;
-    margin-bottom: 10vh;
-}
+        align-items: flex-start;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
 
     .field {
-    min-height: 5%;
-    width: fit-content;
-}
+        width: fit-content;
+    }
 
     .mobile-sidebar {
         display: flex !important;
@@ -743,7 +757,7 @@ a:-webkit-any-link {
 }
 
 .color-picker input[type="radio"]#pink {
-    --radio-color: pink;
+    --radio-color: white;
 }
 
 .color-picker input[type="radio"]#blue {
@@ -759,10 +773,18 @@ a:-webkit-any-link {
 }
 
 .pink {
-    --colour-1: hsl(310 50% 90%);
-    --clr-card-bg: hsl(310 50% 100%);
-    --colour-3: hsl(310 50% 15%);
-    --conversations: hsl(310 50% 25%);
+    --colour-1: #ffffff;
+    --colour-2: #000000;
+    --colour-3: #000000;
+    --colour-4: #000000;
+    --colour-5: #000000;
+    --colour-6: #000000;
+
+    --accent: #ffffff;
+    --blur-bg: #98989866;
+    --blur-border: #00000040;
+    --user-input: #000000;
+    --conversations: #000000;
 }
 
 .blue {
@@ -787,10 +809,18 @@ a:-webkit-any-link {
 }
 
 :root:has(#pink:checked) {
-    --colour-1: hsl(310 50% 90%);
-    --clr-card-bg: hsl(310 50% 100%);
-    --colour-3: hsl(310 50% 15%);
-    --conversations: hsl(310 50% 25%);
+    --colour-1: #ffffff;
+    --colour-2: #000000;
+    --colour-3: #000000;
+    --colour-4: #000000;
+    --colour-5: #000000;
+    --colour-6: #000000;
+
+    --accent: #ffffff;
+    --blur-bg: #98989866;
+    --blur-border: #00000040;
+    --user-input: #000000;
+    --conversations: #000000;
 }
 
 :root:has(#blue:checked) {
@@ -814,8 +844,18 @@ a:-webkit-any-link {
     --conversations: hsl(209 50% 80%);
 }
 
-.trash-icon {
-    position: absolute;
+#send-button {
+    border: 1px dashed #e4d4ffa6;
+    border-radius: 4px;
+    cursor: pointer;
+    padding-left: 8px;
+    padding-right: 5px;
+    padding-top: 2px;
+    padding-bottom: 2px;
     top: 20px;
-    right: 20px;
+    left: 8px;
+}
+
+#send-button:hover {
+    border: 1px solid #e4d4ffc9;
 }
