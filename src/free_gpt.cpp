@@ -2670,3 +2670,198 @@ boost::asio::awaitable<void> FreeGpt::gptForLove(std::shared_ptr<Channel> ch, nl
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::chatGptDemo(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    boost::system::error_code err{};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    CURLcode res;
+    int32_t response_code;
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+        std::string recv;
+    };
+    Input input;
+
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_setopt(curl, CURLOPT_URL, "https://chat.chatgptdemo.net/");
+
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+    curlEasySetopt(curl);
+
+    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch, recv] = *input_ptr;
+        recv.append(data);
+        return size * nmemb;
+    };
+    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "origin: https://chat.chatgptdemo.net");
+    headers = curl_slist_append(headers, "referer: https://chat.chatgptdemo.net/");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    ScopeExit auto_exit{[=] {
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }};
+
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("chatGptDemo http code:{}", response_code));
+        co_return;
+    }
+    auto ret = findAll(R"(<div id="USERID" style="display: none">(.*)<\/div>)", input.recv);
+    if (ret.empty()) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("not found userid"));
+        co_return;
+    }
+    auto extract_value = [](const std::string& str) {
+        size_t start = str.find('>') + 1;
+        size_t end = str.find('<', start);
+        std::string value = str.substr(start, end - start);
+        return value;
+    };
+    auto user_id = extract_value(ret[0]);
+    SPDLOG_INFO("user_id: [{}]", user_id);
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://chat.chatgptdemo.net/new_chat");
+
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+    input.recv.clear();
+    auto api_action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch, recv] = *input_ptr;
+        recv.append(data);
+        return size * nmemb;
+    };
+    size_t (*api_cb)(void* contents, size_t size, size_t nmemb, void* userp) = api_action_cb;
+    curlEasySetopt(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, api_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+
+    constexpr std::string_view json_str = R"({"user_id":"user_id"})";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+    request["user_id"] = user_id;
+    auto request_str = request.dump();
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_str.c_str());
+
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("chatGptDemo http code:{}", response_code));
+        co_return;
+    }
+    SPDLOG_INFO("input.recv: [{}]", input.recv);
+    nlohmann::json get_text_rsp = nlohmann::json::parse(input.recv, nullptr, false);
+    auto chat_id = get_text_rsp["id_"].get<std::string>();
+    SPDLOG_INFO("chat_id: [{}]", chat_id);
+    input.recv.clear();
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://chat.chatgptdemo.net/chat_api_stream");
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+    curlEasySetopt(curl);
+
+    auto stream_action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch, recv] = *input_ptr;
+        recv.append(data);
+        while (true) {
+            auto position = recv.find("\n");
+            if (position == std::string::npos)
+                break;
+            auto msg = recv.substr(0, position + 1);
+            recv.erase(0, position + 1);
+            msg.pop_back();
+            if (msg.empty() || !msg.contains("content"))
+                continue;
+            if (!msg.starts_with("data: "))
+                continue;
+            msg.erase(0, 6);
+            boost::system::error_code err{};
+            nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", msg);
+                boost::asio::post(ch->get_executor(),
+                                  [=] { ch->try_send(err, std::format("json parse error: [{}]", msg)); });
+                continue;
+            }
+            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+            if (!str.empty())
+                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+        }
+        return size * nmemb;
+    };
+    size_t (*stream_action_cb_fn)(void* contents, size_t size, size_t nmemb, void* userp) = stream_action_cb;
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_action_cb_fn);
+    input.ch = ch;
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+    headers = curl_slist_append(headers, "authority: chat.chatgptdemo.net");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    constexpr std::string_view ask_json_str =
+        R"({"question": "hello", "chat_id": "6524f3640d0d824902f598c1", "timestamp": 1696920420510})";
+    nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+    ask_request["question"] = prompt;
+    ask_request["chat_id"] = chat_id;
+    uint64_t timestamp =
+        std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    request["timestamp"] = timestamp;
+    std::string ask_request_str = ask_request.dump();
+    SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, ask_request_str.c_str());
+
+    res = curl_easy_perform(curl);
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("gptalk http code:{}", response_code));
+        co_return;
+    }
+    co_return;
+}

@@ -37,6 +37,7 @@ public:
     boost::asio::awaitable<void> chatGpt4Online(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptalk(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptForLove(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> chatGptDemo(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
