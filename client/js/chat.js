@@ -112,7 +112,7 @@ const ask_gpt = async (message) => {
     await new Promise((r) => setTimeout(r, 1000));
     window.scrollTo(0, 0);
 
-    const response = await fetch(`/backend-api/v2/conversation`, {
+    const response = await fetch(`{{api_path}}/backend-api/v2/conversation`, {
       method: `POST`,
       signal: window.controller.signal,
       headers: {
@@ -151,7 +151,7 @@ const ask_gpt = async (message) => {
 
       if (
         chunk.includes(
-          `<form id="challenge-form" action="/backend-api/v2/conversation?`
+          `<form id="challenge-form" action="{{api_path}}/backend-api/v2/conversation?`
         )
       ) {
         chunk = `cloudflare token expired, please refresh the page.`;
