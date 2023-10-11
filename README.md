@@ -85,6 +85,15 @@ docker pull fantasypeak/freegpt:latest
 docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
 ```
 
+### How to run on the arm64 platform
+```
+docker pull fantasypeak/freegpt:latest
+docker pull fantasypeak/freegpt-zeus:latest
+docker run --rm --privileged aptman/qus -s -- -p x86_64
+docker run --net=host -it --name zeus fantasypeak/freegpt-zeus:latest
+docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
+```
+
 ### Call OpenAi Api
 ```
 // It supports calling OpenAI's API, but need set API_KEY
