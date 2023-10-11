@@ -31,7 +31,6 @@ public:
     boost::asio::awaitable<void> vitalentum(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptGo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aibn(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> chatGptDuo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatForAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> freeGpt(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGpt4Online(std::shared_ptr<Channel>, nlohmann::json);

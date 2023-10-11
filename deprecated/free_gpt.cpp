@@ -927,3 +927,81 @@ boost::asio::awaitable<void> FreeGpt::h2o(std::shared_ptr<Channel> ch, nlohmann:
     });
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::chatGptDuo(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+
+    boost::system::error_code err{};
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, "https://chatgptduo.com/");
+    auto request_data = urlEncode(std::format("prompt=('{}',)&search=('{}',)&purpose=ask", prompt, prompt));
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_data.c_str());
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+    };
+    Input input{ch};
+    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        boost::system::error_code err{};
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch] = *input_ptr;
+        boost::asio::post(ch->get_executor(), [=, data = std::move(data)] mutable {
+            nlohmann::json json = nlohmann::json::parse(data, nullptr, false);
+            if (json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", data);
+                ch->try_send(err, data);
+                return;
+            }
+            if (json.contains("answer")) {
+                auto str = json["answer"].get<std::string>();
+                ch->try_send(err, str);
+            } else {
+                ch->try_send(err, std::format("Invalid JSON: {}", json.dump()));
+            }
+            return;
+        });
+        return size * nmemb;
+    };
+    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
+    curlEasySetopt(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    ScopeExit auto_exit{[=] {
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }};
+
+    res = curl_easy_perform(curl);
+
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    int32_t response_code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("you http code:{}", response_code));
+        co_return;
+    }
+    co_return;
+}
