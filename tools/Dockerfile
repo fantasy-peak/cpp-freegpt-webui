@@ -1,16 +1,9 @@
-FROM ubuntu:23.04
+FROM rockylinux:9.2
 
-RUN rm /bin/sh && ln -s /bin/bash /bin/sh
-RUN apt-get update -y
-RUN apt-get install -y python3/lunar python3.11-venv dbus-x11/lunar curl nodejs/lunar tree
+RUN dnf upgrade --refresh -y
 
-# install Chrome
-# https://stackoverflow.com/questions/70955307/how-to-install-google-chrome-in-a-docker-container
-RUN curl -LO  https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-RUN apt-get install -y ./google-chrome-stable_current_amd64.deb
-RUN rm google-chrome-stable_current_amd64.deb
-# Check chrome version
-RUN echo "Chrome: " && google-chrome --version
+RUN dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-9.noarch.rpm -y
+RUN dnf install chromium -y
 
 WORKDIR /app
 
