@@ -3,7 +3,7 @@ FROM rockylinux:9.2
 RUN dnf upgrade --refresh -y
 
 RUN dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-9.noarch.rpm -y
-RUN dnf install chromium -y
+RUN dnf install chromium nodejs -y
 
 WORKDIR /app
 
