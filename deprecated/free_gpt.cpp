@@ -1005,3 +1005,70 @@ boost::asio::awaitable<void> FreeGpt::chatGptDuo(std::shared_ptr<Channel> ch, nl
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    boost::system::error_code err{};
+    ScopeExit auto_exit{[&] { ch->close(); }};
+
+    constexpr std::string_view host = "chat.aivvm.com";
+    constexpr std::string_view port = "443";
+
+    constexpr std::string_view user_agent{
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:102.0) Gecko/20100101 Firefox/102.0)"};
+
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/chat", 11};
+    req.set(boost::beast::http::field::host, host);
+    req.set(boost::beast::http::field::user_agent, user_agent);
+    req.set("Accept", "*/*");
+    req.set("accept-language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2");
+    req.set("origin", "https://chat.aivvm.com");
+    req.set("referer", "https://chat.aivvm.com/zh");
+    req.set(boost::beast::http::field::content_type, "application/json");
+    req.set("sec-fetch-dest", "empty");
+    req.set("sec-fetch-mode", "cors");
+    req.set("sec-fetch-site", "same-origin");
+    req.set("DNT", "1");
+
+    constexpr std::string_view json_str = R"({
+        "model":{
+            "id":"gpt-3.5-turbo",
+            "name":"GPT-3.5",
+            "maxLength":12000,
+            "tokenLimit":4096
+        },
+        "messages":[
+            {
+                "role":"user",
+                "content":"hello"
+            }
+        ],
+        "key":"",
+        "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
+        "temperature":0.7
+    })";
+    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+
+    request["messages"] = getConversationJson(json);
+    SPDLOG_INFO("{}", request.dump(2));
+
+    req.body() = request.dump();
+    req.prepare_payload();
+
+    auto result = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string str) {
+        boost::system::error_code err{};
+        if (!str.empty())
+            ch->try_send(err, str);
+    });
+    co_return;
+}

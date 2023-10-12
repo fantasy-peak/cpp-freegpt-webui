@@ -26,7 +26,6 @@ public:
     boost::asio::awaitable<void> you(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> binjie(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatBase(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> aivvm(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> ylokh(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> vitalentum(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptGo(std::shared_ptr<Channel>, nlohmann::json);
