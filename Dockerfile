@@ -1,7 +1,8 @@
 FROM ubuntu:23.04
 
 #use --build-arg LIB_DIR=/usr/lib for arm64 cpus
-ARG LIB_DIR=/usr/lib64
+ARG LIB_DIR=/local/lib
+RUN mkdir -p /local/lib
 
 ENV LD_LIBRARY_PATH=$LIB_DIR:$LD_LIBRARY_PATH
 ENV LIBRARY_PATH=$LIB_DIR:$LIBRARY_PATH

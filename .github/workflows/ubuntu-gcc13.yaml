@@ -57,30 +57,28 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Build the Docker image to dev
+      - name: Build the Docker image and push to dev
         if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
         run: |
-          docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
+          docker run --rm --privileged tonistiigi/binfmt:latest --install all
+          docker buildx create --name fantasy-peak-builder
+          docker buildx use fantasy-peak-builder
+          docker buildx inspect --bootstrap fantasy-peak-builder
+          docker buildx ls
+          docker buildx build --platform linux/arm64,linux/amd64 -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev . --push
           cd tools
-          docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:dev
+          docker buildx build --platform linux/arm64,linux/amd64 -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:dev . --push
           cd ..
 
-      - name: Build the Docker image to main
+      - name: Build the Docker image and push to main
         if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
         run: |
-          docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
+          docker run --rm --privileged tonistiigi/binfmt:latest --install all
+          docker buildx create --name fantasy-peak-builder
+          docker buildx use fantasy-peak-builder
+          docker buildx inspect --bootstrap fantasy-peak-builder
+          docker buildx ls
+          docker buildx build --platform linux/arm64,linux/amd64 -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest . --push
           cd tools
-          docker build . -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:latest
+          docker buildx build --platform linux/arm64,linux/amd64 -t ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:latest . --push
           cd ..
-
-      - name: Docker image push to dev
-        if: github.ref_name == 'dev' && github.repository_owner == 'fantasy-peak'
-        run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:dev
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:dev
-
-      - name: Docker image push main
-        if: github.ref_name == 'main' && github.repository_owner == 'fantasy-peak'
-        run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt:latest
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/freegpt-zeus:latest
