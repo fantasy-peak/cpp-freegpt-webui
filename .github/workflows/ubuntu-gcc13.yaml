@@ -19,14 +19,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgl1-mesa-dev libglu1-mesa-dev p7zip gobjc g++-13 wget sudo libcurl4-openssl-dev libnss3 nss-plugin-pem ca-certificates
-          wget https://github.com/lwthiker/curl-impersonate/releases/download/v0.5.4/libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
-          sudo mv libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz /usr/lib64
+          wget https://github.com/lwthiker/curl-impersonate/releases/download/v0.6.0-alpha.1/libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz
+          sudo mv libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz /usr/lib64
           cd /usr/lib64
-          sudo tar -xvf libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
+          sudo tar -xvf libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz
           cd -
-          wget https://github.com/xmake-io/xmake/releases/download/v2.8.2/xmake-v2.8.2.xz.run
-          chmod 777 xmake-v2.8.2.xz.run
-          ./xmake-v2.8.2.xz.run > a.txt
+          wget https://github.com/xmake-io/xmake/releases/download/v2.8.3/xmake-v2.8.3.xz.run
+          chmod 777 xmake-v2.8.3.xz.run
+          ./xmake-v2.8.3.xz.run > a.txt
 
       - name: checkout
         uses: actions/checkout@v3
