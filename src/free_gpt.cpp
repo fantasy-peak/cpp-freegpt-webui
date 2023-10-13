@@ -2892,3 +2892,82 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::gptChatly(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    boost::system::error_code err{};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+        std::string recv;
+    };
+    Input input;
+
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
+
+    auto ret = sendHttpRequest(CurlHttpRequest{
+        .curl = curl,
+        .url = "https://gptchatly.com/fetch-response",
+        .http_proxy = m_cfg.http_proxy,
+        .cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
+            boost::system::error_code err{};
+            auto input_ptr = static_cast<Input*>(userp);
+            std::string data{(char*)contents, size * nmemb};
+            auto& [ch, recv] = *input_ptr;
+            nlohmann::json line_json = nlohmann::json::parse(data, nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", data);
+                boost::asio::post(ch->get_executor(),
+                                  [=] { ch->try_send(err, std::format("json parse error: [{}]", data)); });
+                return size * nmemb;
+            }
+            auto str = line_json["chatGPTResponse"].get<std::string>();
+            boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+            return size * nmemb;
+        },
+        .input = [&] -> void* {
+            input.recv.clear();
+            input.ch = ch;
+            return &input;
+        }(),
+        .headers = [&] -> auto& {
+            static std::unordered_map<std::string, std::string> headers{
+                {"Accept", "*/*"},
+                {"origin", "https://gptchatly.com"},
+                {"referer", "https://gptchatly.com/"},
+                {"Content-Type", "application/json"},
+            };
+            return headers;
+        }(),
+        .body = [&] -> std::string {
+            constexpr std::string_view ask_json_str = R"({
+                "past_conversations": ""
+            })";
+            nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+            ask_request["past_conversations"] = getConversationJson(json);
+            std::string ask_request_str = ask_request.dump();
+            SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+            return ask_request_str;
+        }(),
+        .response_header_ptr = nullptr,
+        .expect_response_code = 200,
+        .ssl_verify = false,
+    });
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    co_return;
+}
