@@ -138,104 +138,32 @@ std::string charToHex(char c) {
     return result;
 }
 
-std::string urlEncode(const std::string& src) {
-    std::string result;
-    std::string::const_iterator iter;
-
-    for (iter = src.begin(); iter != src.end(); ++iter) {
-        switch (*iter) {
-            case ' ':
-                result.append(1, '+');
-                break;
-            // alnum
-            case 'A':
-            case 'B':
-            case 'C':
-            case 'D':
-            case 'E':
-            case 'F':
-            case 'G':
-            case 'H':
-            case 'I':
-            case 'J':
-            case 'K':
-            case 'L':
-            case 'M':
-            case 'N':
-            case 'O':
-            case 'P':
-            case 'Q':
-            case 'R':
-            case 'S':
-            case 'T':
-            case 'U':
-            case 'V':
-            case 'W':
-            case 'X':
-            case 'Y':
-            case 'Z':
-            case 'a':
-            case 'b':
-            case 'c':
-            case 'd':
-            case 'e':
-            case 'f':
-            case 'g':
-            case 'h':
-            case 'i':
-            case 'j':
-            case 'k':
-            case 'l':
-            case 'm':
-            case 'n':
-            case 'o':
-            case 'p':
-            case 'q':
-            case 'r':
-            case 's':
-            case 't':
-            case 'u':
-            case 'v':
-            case 'w':
-            case 'x':
-            case 'y':
-            case 'z':
-            case '0':
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-            case '5':
-            case '6':
-            case '7':
-            case '8':
-            case '9':
-            // mark
-            case '-':
-            case '_':
-            case '.':
-            case '!':
-            case '~':
-            case '*':
-            case '\'':
-            case '(':
-            case ')':
-            case '&':
-            case '=':
-            case '/':
-            case '\\':
-            case '?':
-                result.append(1, *iter);
-                break;
-            // escape
-            default:
-                result.append(1, '%');
-                result.append(charToHex(*iter));
-                break;
+std::string paramsToQueryStr(const std::multimap<std::string, std::string>& params) {
+    auto encode_query_param = [](const std::string& value) {
+        std::ostringstream escaped;
+        escaped.fill('0');
+        escaped << std::hex;
+        for (auto c : value) {
+            if (std::isalnum(static_cast<uint8_t>(c)) || c == '-' || c == '_' || c == '.' || c == '!' || c == '~' ||
+                c == '*' || c == '\'' || c == '(' || c == ')') {
+                escaped << c;
+            } else {
+                escaped << std::uppercase;
+                escaped << '%' << std::setw(2) << static_cast<int>(static_cast<unsigned char>(c));
+                escaped << std::nouppercase;
+            }
         }
+        return escaped.str();
+    };
+    std::string query;
+    for (auto it = params.begin(); it != params.end(); ++it) {
+        if (it != params.begin())
+            query += "&";
+        query += it->first;
+        query += "=";
+        query += encode_query_param(it->second);
     }
-
-    return result;
+    return query;
 }
 
 enum class Status : uint8_t {
@@ -970,16 +898,17 @@ create_client:
     request.set(boost::beast::http::field::user_agent, user_agent);
     request.set("Content-Type", "application/x-www-form-urlencoded");
 
-    std::stringstream ss;
-    ss << "message=" << urlEncode(std::format("user: {}\nassistant: ", prompt)) << "&";
-    ss << "_wpnonce=" << nonce << "&";
-    ss << "post_id=" << post_id << "&";
-    ss << "url=" << urlEncode("https://chatgpt.ai") << "&";
-    ss << "action=wpaicg_chat_shortcode_message&";
-    ss << "bot_id=" << bot_id;
-
-    SPDLOG_INFO("request: {}", ss.str());
-    request.body() = ss.str();
+    std::multimap<std::string, std::string> params{
+        {"message", std::format("user: {}\nassistant: ", prompt)},
+        {"_wpnonce", nonce},
+        {"post_id", post_id},
+        {"url", "https://chatgpt.ai"},
+        {"action", "wpaicg_chat_shortcode_message"},
+        {"bot_id", bot_id},
+    };
+    auto str = paramsToQueryStr(params);
+    SPDLOG_INFO("request: {}", str);
+    request.body() = str;
     request.prepare_payload();
 
     auto [ec, count] = co_await boost::beast::http::async_write(stream_, request, use_nothrow_awaitable);
@@ -1001,7 +930,7 @@ create_client:
         co_await ch->async_send(err, response.reason(), use_nothrow_awaitable);
         co_return;
     }
-    ss.clear();
+    std::stringstream ss;
     ss << response.base();
     SPDLOG_INFO("{}", ss.str());
     SPDLOG_INFO("response.body(): {}", response.body());
@@ -1375,12 +1304,18 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
             boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, error_info); });
             return;
         }
-        auto url = std::format(
-            "https://you.com/api/"
-            "streamingSearch?q={}&page=1&count=10&safeSearch=Off&onShoppingPage=False&mkt=&responseFilter="
-            "WebPages%"
-            "2CTranslations%2CTimeZone%2CComputation%2CRelatedSearches&domain=youchat&queryTraceId={}",
-            urlEncode(prompt), createUuidString());
+        std::multimap<std::string, std::string> params{
+            {"q", prompt},
+            {"page", "1"},
+            {"count", "10"},
+            {"safeSearch", "Off"},
+            {"onShoppingPage", "False"},
+            {"mkt", ""},
+            {"responseFilter", "WebPages,Translations,TimeZone,Computation,RelatedSearches"},
+            {"domain", "youchat"},
+            {"queryTraceId", createUuidString()},
+        };
+        auto url = std::format("https://you.com/api/streamingSearch?{}", paramsToQueryStr(params));
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
         if (!m_cfg.http_proxy.empty())
             curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
@@ -1739,8 +1674,13 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
         ch->try_send(err, error_info);
         co_return;
     }
-    auto get_token_url =
-        std::format("https://gptgo.ai/action_get_token.php?q={}&hlgpt=default&hl=en", urlEncode(prompt));
+
+    std::multimap<std::string, std::string> params{
+        {"q", prompt},
+        {"hlgpt", "default"},
+        {"hl", "en"},
+    };
+    auto get_token_url = std::format("https://gptgo.ai/action_get_token.php?{}", paramsToQueryStr(params));
     curl_easy_setopt(curl, CURLOPT_URL, get_token_url.c_str());
     if (!m_cfg.http_proxy.empty())
         curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
