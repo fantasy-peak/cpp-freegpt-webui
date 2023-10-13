@@ -352,6 +352,7 @@ int main(int argc, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-gptforlove", FreeGpt::gptForLove);
     ADD_METHOD("gpt-3.5-turbo-stream-ChatgptDemo", FreeGpt::chatGptDemo);
     ADD_METHOD("llama2", FreeGpt::llama2);
+    ADD_METHOD("gpt-3.5-turbo-stream-GptChatly", FreeGpt::gptChatly);
 
     SPDLOG_INFO("active provider:");
     for (auto& [provider, _] : gpt_function)
