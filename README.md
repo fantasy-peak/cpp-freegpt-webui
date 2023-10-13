@@ -35,10 +35,10 @@ chmod 777 xmake-v2.8.2.xz.run
 source ~/.xmake/profile
 
 3. install libcurl-impersonate, ubuntu (apt-get install libcurl4-openssl-dev) centos7 (yum install libcurl-devel.x86_64)
-wget https://github.com/lwthiker/curl-impersonate/releases/download/v0.5.4/libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
-sudo mv libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz /usr/lib64
+wget https://github.com/lwthiker/curl-impersonate/releases/download/v0.6.0-alpha.1/libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz
+sudo mv libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz /usr/lib64
 cd /usr/lib64
-sudo tar -xvf libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
+sudo tar -xvf libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz
 export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
 export LIBRARY_PATH=/usr/lib64:$LIBRARY_PATH
 
