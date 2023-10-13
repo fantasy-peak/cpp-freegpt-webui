@@ -1072,3 +1072,62 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     });
     co_return;
 }
+
+std::string generateHexStr(int length) {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 15);
+
+    std::stringstream ss;
+    ss << std::hex;
+
+    for (int i = 0; i < length; i++)
+        ss << std::nouppercase << std::setw(1) << std::setfill('0') << dis(gen);
+    return ss.str();
+}
+
+std::string encrypt(const std::string& raw_data) {
+    auto random_key_str = generateHexStr(16);
+    auto random_iv_str = generateHexStr(16);
+    char key_buffer[17]{};
+    memcpy(key_buffer, random_key_str.c_str(), random_key_str.size());
+    std::vector<unsigned char> key = plusaes::key_from_string(&key_buffer);  // 16-char = 128-bit
+    unsigned char iv[16]{};
+    memcpy(iv, random_iv_str.data(), 16);
+    const unsigned long encrypted_size = plusaes::get_padded_encrypted_size(raw_data.size());
+    std::vector<unsigned char> encrypted(encrypted_size);
+    plusaes::encrypt_cbc((unsigned char*)raw_data.data(), raw_data.size(), &key[0], key.size(), &iv, &encrypted[0],
+                         encrypted.size(), true);
+    std::stringstream ss;
+    std::transform(encrypted.begin(), encrypted.end(), std::ostream_iterator<std::string>(ss),
+                   [](unsigned char c) -> std::string { return std::format("{:02x}", int(c)); });
+    return ss.str() + random_key_str + random_iv_str;
+}
+
+#include <boost/iostreams/copy.hpp>
+#include <boost/iostreams/device/array.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/stream.hpp>
+std::expected<std::string, std::string> decompress(auto& res) {
+    try {
+        boost::iostreams::array_source src{res.body().data(), res.body().size()};
+        boost::iostreams::filtering_istream is;
+        if (res["Content-Encoding"] == "deflate") {
+            SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
+            is.push(boost::iostreams::zlib_decompressor{-MAX_WBITS});  // deflate
+        } else if (res["Content-Encoding"] == "gzip") {
+            SPDLOG_INFO("decompressing: {}", res["Content-Encoding"]);
+            is.push(boost::iostreams::gzip_decompressor{});  // gzip
+        } else if (res["Content-Encoding"] == "") {
+            SPDLOG_INFO("uncompressed: {}", res["Content-Encoding"]);
+        }
+        is.push(src);
+        std::stringstream strstream;
+        boost::iostreams::copy(is, strstream);
+        return strstream.str();
+    } catch (const std::exception& e) {
+        return std::unexpected(e.what());
+    }
+}
+
