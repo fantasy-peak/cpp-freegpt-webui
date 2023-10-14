@@ -286,61 +286,6 @@ uint64_t getTimestamp(std::chrono::time_point<std::chrono::system_clock> now = s
     return timestamp;
 }
 
-std::expected<nlohmann::json, std::string> callZeus(const std::string& host, const std::string& request_body) {
-    CURLcode res;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("callZeus curl_easy_init() failed:{}", curl_easy_strerror(res));
-        return std::unexpected(error_info);
-    }
-    curl_easy_setopt(curl, CURLOPT_URL, host.data());
-
-    struct Input {
-        std::string recv;
-    };
-    Input input;
-    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-        auto input_ptr = static_cast<Input*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        auto& [recv] = *input_ptr;
-        recv.append(data);
-        return size * nmemb;
-    };
-    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_body.c_str());
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    ScopeExit auto_exit{[=] {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-    }};
-
-    res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
-        auto error_info = std::format("callZeus curl_easy_perform() failed:{}", curl_easy_strerror(res));
-        return std::unexpected(error_info);
-    }
-    int32_t response_code;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        return std::unexpected(std::format("callZeus http code:{}", response_code));
-    }
-    nlohmann::json rsp = nlohmann::json::parse(input.recv, nullptr, false);
-    if (rsp.is_discarded()) {
-        SPDLOG_ERROR("json parse error");
-        return std::unexpected("parse callZeus error");
-    }
-    return rsp;
-}
-
 struct CurlHttpRequest {
     CURL* curl{nullptr};
     std::string url;
@@ -423,6 +368,49 @@ std::optional<std::string> sendHttpRequest(const CurlHttpRequest& curl_http_requ
         }
     }
     return std::nullopt;
+}
+
+std::expected<nlohmann::json, std::string> callZeus(const std::string& host, const std::string& request_body) {
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("callZeus curl_easy_init() failed:{}", curl_easy_strerror(res));
+        return std::unexpected(error_info);
+    }
+    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
+    std::string http_proxy;
+    std::string recv;
+
+    auto ret = sendHttpRequest(CurlHttpRequest{
+        .curl = curl,
+        .url = host,
+        .http_proxy = http_proxy,
+        .cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
+            auto recv_ptr = static_cast<std::string*>(userp);
+            std::string data{(char*)contents, size * nmemb};
+            recv_ptr->append(data);
+            return size * nmemb;
+        },
+        .input = &recv,
+        .headers = [&] -> auto& {
+            static std::unordered_map<std::string, std::string> headers{
+                {"Content-Type", "application/json"},
+            };
+            return headers;
+        }(),
+        .body = request_body,
+        .response_header_ptr = nullptr,
+        .expect_response_code = 200,
+        .ssl_verify = false,
+    });
+    if (ret)
+        return std::unexpected(ret.value());
+    nlohmann::json rsp = nlohmann::json::parse(recv, nullptr, false);
+    if (rsp.is_discarded()) {
+        SPDLOG_ERROR("json parse error");
+        return std::unexpected("parse callZeus error");
+    }
+    return rsp;
 }
 
 }  // namespace
@@ -1754,7 +1742,7 @@ boost::asio::awaitable<void> FreeGpt::chatForAi(std::shared_ptr<Channel> ch, nlo
         ch->try_send(err, error_info);
         co_return;
     }
-    curl_easy_setopt(curl, CURLOPT_URL, "https://chatforai.com/api/handle/provider-openai");
+    curl_easy_setopt(curl, CURLOPT_URL, "https://chatforai.store/api/handle/provider-openai");
     if (!m_cfg.http_proxy.empty())
         curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
 
@@ -2364,7 +2352,7 @@ boost::asio::awaitable<void> FreeGpt::gptForLove(std::shared_ptr<Channel> ch, nl
     constexpr std::string_view request_str{R"({
         "prompt": "hello",
         "options": {},
-        "systemMessage": "You are ChatGPT, the version is GPT3.5, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
+        "systemMessage": "You are ChatGPT, the version is GPT3.5, a large language model trained by OpenAI. Follow the user's instructions carefully.",
         "temperature": 0.8,
         "top_p": 1,
         "secret": "U2FsdGVkX18vdtlMj0nP1LoUzEqJTP0is+Q2+bQJNMk=",
