@@ -2617,3 +2617,107 @@ boost::asio::awaitable<void> FreeGpt::noowai(std::shared_ptr<Channel> ch, nlohma
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::geekGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    boost::system::error_code err{};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+        std::string recv;
+    };
+    Input input;
+
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
+
+    auto ret = sendHttpRequest(CurlHttpRequest{
+        .curl = curl,
+        .url = "https://ai.fakeopen.com/v1/chat/completions",
+        .http_proxy = m_cfg.http_proxy,
+        .cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
+            auto input_ptr = static_cast<Input*>(userp);
+            std::string data{(char*)contents, size * nmemb};
+            auto& [ch, recv] = *input_ptr;
+            recv.append(data);
+            while (true) {
+                auto position = recv.find("\n");
+                if (position == std::string::npos)
+                    break;
+                auto msg = recv.substr(0, position + 1);
+                recv.erase(0, position + 1);
+                msg.pop_back();
+                if (msg.empty() || !msg.contains("content"))
+                    continue;
+                auto fields = splitString(msg, "data: ");
+                boost::system::error_code err{};
+                nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                if (line_json.is_discarded()) {
+                    SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                    boost::asio::post(ch->get_executor(), [=] {
+                        ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                    });
+                    continue;
+                }
+                auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                if (!str.empty() && str != "[DONE]")
+                    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+            }
+            return size * nmemb;
+        },
+        .input = [&] -> void* {
+            input.recv.clear();
+            input.ch = ch;
+            return &input;
+        }(),
+        .headers = [&] -> auto& {
+            static std::unordered_map<std::string, std::string> headers{
+                {"Accept", "*/*"},
+                {"origin", "https://chat.geekgpt.org"},
+                {"referer", "https://chat.geekgpt.org/"},
+                {"Content-Type", "application/json"},
+                {"authority", "ai.fakeopen.com"},
+                {"authorization", "Bearer pk-this-is-a-real-free-pool-token-for-everyone"},
+            };
+            return headers;
+        }(),
+        .body = [&] -> std::string {
+            constexpr std::string_view ask_json_str = R"({
+                "messages": [{
+                    "role": "user",
+                    "content": "hello"
+                }],
+                "model": "gpt-3.5-turbo",
+                "temperature": 0.9,
+                "presence_penalty": 0,
+                "top_p": 1,
+                "frequency_penalty": 0,
+                "stream": true
+            })";
+            nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+            ask_request["messages"] = getConversationJson(json);
+            std::string ask_request_str = ask_request.dump();
+            SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+            return ask_request_str;
+        }(),
+        .response_header_ptr = nullptr,
+        .expect_response_code = 200,
+        .ssl_verify = false,
+    });
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    co_return;
+}
