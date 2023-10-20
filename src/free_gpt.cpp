@@ -370,6 +370,111 @@ std::optional<std::string> sendHttpRequest(const CurlHttpRequest& curl_http_requ
     return std::nullopt;
 }
 
+class Curl final {
+public:
+    Curl() {
+        m_curl = curl_easy_init();
+        if (!m_curl)
+            throw std::runtime_error("curl_easy_init() failed");
+        curl_easy_setopt(m_curl, CURLOPT_MAXREDIRS, 20L);
+        curl_easy_setopt(m_curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(m_curl, CURLOPT_TIMEOUT, 120L);
+        curl_easy_setopt(m_curl, CURLOPT_CONNECTTIMEOUT, 30L);
+        curl_easy_setopt(m_curl, CURLOPT_CAINFO, nullptr);
+        curl_easy_setopt(m_curl, CURLOPT_SSL_VERIFYPEER, 0L);
+        curl_easy_setopt(m_curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    }
+    ~Curl() {
+        if (m_headers)
+            curl_slist_free_all(m_headers);
+        if (m_curl)
+            curl_easy_cleanup(m_curl);
+    }
+
+    auto& setUrl(std::string_view url) {
+        m_url = url;
+        curl_easy_setopt(m_curl, CURLOPT_URL, m_url.data());
+        return *this;
+    }
+    auto& setBody(std::string body) {
+        if (!body.empty()) {
+            m_body = std::move(body);
+            curl_easy_setopt(m_curl, CURLOPT_POSTFIELDS, m_body.c_str());
+        }
+        return *this;
+    }
+    auto& setProxy(std::string_view http_proxy) {
+        if (!http_proxy.empty()) {
+            m_http_proxy = http_proxy;
+            curl_easy_setopt(m_curl, CURLOPT_PROXY, m_http_proxy.data());
+        }
+        return *this;
+    }
+    auto& setHttpHeaders(const std::unordered_multimap<std::string, std::string>& http_headers) {
+        for (auto& [k, v] : http_headers)
+            m_headers_list.emplace_back(std::format("{}: {}", k, v));
+        for (auto& header : m_headers_list)
+            m_headers = curl_slist_append(m_headers, header.c_str());
+        curl_easy_setopt(m_curl, CURLOPT_HTTPHEADER, m_headers);
+        return *this;
+    }
+    static size_t recvCallback(void* contents, size_t size, size_t nmemb, void* userp) {
+        auto cb = static_cast<std::function<void(std::string)>*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        (*cb)(std::move(data));
+        return size * nmemb;
+    }
+    auto& setRecvBodyCallback(std::function<void(std::string)> cb) {
+        m_recv_body_cb = std::move(cb);
+        curl_easy_setopt(m_curl, CURLOPT_WRITEFUNCTION, &recvCallback);
+        curl_easy_setopt(m_curl, CURLOPT_WRITEDATA, &m_recv_body_cb);
+        return *this;
+    }
+    auto& setRecvHeadersCallback(std::function<void(std::string)> cb) {
+        m_recv_headers_cb = std::move(cb);
+        curl_easy_setopt(m_curl, CURLOPT_HEADERFUNCTION, &recvCallback);
+        curl_easy_setopt(m_curl, CURLOPT_HEADERDATA, &m_recv_headers_cb);
+        return *this;
+    }
+    auto& setOpt(auto option, auto value) {
+        curl_easy_setopt(m_curl, option, value);
+        return *this;
+    }
+    std::optional<std::string> perform() {
+        auto res = curl_easy_perform(m_curl);
+        if (res != CURLE_OK) {
+            auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+            return error_info;
+        }
+        int32_t response_code;
+        curl_easy_getinfo(m_curl, CURLINFO_RESPONSE_CODE, &response_code);
+        if (m_http_status_code != response_code)
+            return std::format("http status code is {}", response_code);
+        return std::nullopt;
+    }
+    auto& clearHeaders() {
+        if (m_headers)
+            curl_slist_free_all(m_headers);
+        m_headers_list.clear();
+        return *this;
+    }
+    auto& setHttpStatusCode(int32_t code) {
+        m_http_status_code = code;
+        return *this;
+    }
+
+private:
+    CURL* m_curl{nullptr};
+    std::string_view m_url;
+    std::string m_body;
+    std::string_view m_http_proxy;
+    struct curl_slist* m_headers{nullptr};
+    std::vector<std::string> m_headers_list;
+    std::function<void(std::string)> m_recv_body_cb{[](std::string) {}};
+    std::function<void(std::string)> m_recv_headers_cb{[](std::string) {}};
+    int32_t m_http_status_code{200};
+};
+
 std::expected<nlohmann::json, std::string> callZeus(const std::string& host, const std::string& request_body) {
     CURLcode res;
     CURL* curl = curl_easy_init();
@@ -2360,119 +2465,91 @@ boost::asio::awaitable<void> FreeGpt::noowai(std::shared_ptr<Channel> ch, nlohma
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
     boost::system::error_code err{};
-
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-
-    struct Input {
-        std::shared_ptr<Channel> ch;
-        std::string recv;
-    };
-    Input input;
-
-    CURLcode res;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
-
-    auto ret = sendHttpRequest(CurlHttpRequest{
-        .curl = curl,
-        .url = "https://noowai.com/wp-json/mwai-ui/v1/chats/submit",
-        .http_proxy = m_cfg.http_proxy,
-        .cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
-            boost::system::error_code err{};
-            auto input_ptr = static_cast<Input*>(userp);
-            std::string data{(char*)contents, size * nmemb};
-            auto& [ch, recv] = *input_ptr;
-            recv.append(data);
-            while (true) {
-                auto position = recv.find("\n");
-                if (position == std::string::npos)
-                    break;
-                auto msg = recv.substr(0, position + 1);
-                recv.erase(0, position + 1);
-                msg.pop_back();
-                if (msg.empty())
-                    continue;
-                std::cout << msg << std::endl;
-                auto fields = splitString(msg, "data: ");
-                nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
-                if (line_json.is_discarded()) {
-                    SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                    boost::asio::post(ch->get_executor(), [=] {
-                        ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
-                    });
-                    continue;
-                }
-                auto type = line_json["type"].get<std::string>();
-                if (type == "live") {
-                    auto str = line_json["data"].get<std::string>();
-                    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
-                }
-            }
-            return size * nmemb;
-        },
-        .input = [&] -> void* {
-            input.recv.clear();
-            input.ch = ch;
-            return &input;
-        }(),
-        .headers = [&] -> auto& {
-            static std::unordered_map<std::string, std::string> headers{
-                {"Accept", "*/*"},
-                {"origin", "https://noowai.com"},
-                {"referer", "https://noowai.com/"},
-                {"Content-Type", "application/json"},
-                {"Alt-Used", "noowai.com"},
-            };
-            return headers;
-        }(),
-        .body = [&] -> std::string {
-            constexpr std::string_view ask_json_str = R"({
-                "botId":"default",
-                "customId":"d49bc3670c3d858458576d75c8ea0f5d",
-                "session":"N/A",
-                "chatId":"v82az2ltn2",
-                "contextId":25,
-                "messages":[
-                    {
-                        "role":"user",
-                        "content":"hello"
-                    }
-                ],
-                "newMessage":"hello",
-                "stream":true
-            })";
-            nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
-            ask_request["messages"] = getConversationJson(json);
-            ask_request["newMessage"] = prompt;
-            ask_request["customId"] = createUuidString();
-            ask_request["chatId"] = [](int len) -> std::string {
-                static std::string chars{"abcdefghijklmnopqrstuvwxyz0123456789"};
-                static std::string letter{"abcdefghijklmnopqrstuvwxyz"};
-                std::random_device rd;
-                std::mt19937 gen(rd());
-                std::uniform_int_distribution<> dis(0, 1000000);
-                std::string random_string;
-                random_string += chars[dis(gen) % letter.length()];
-                len = len - 1;
-                for (int i = 0; i < len; i++)
-                    random_string += chars[dis(gen) % chars.length()];
-                return random_string;
-            }(10);
-            std::string ask_request_str = ask_request.dump();
-            SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
-            return ask_request_str;
-        }(),
-        .response_header_ptr = nullptr,
-        .expect_response_code = 200,
-        .ssl_verify = false,
-    });
-    if (ret) {
+    Curl curl;
+    if (auto ret = curl.setUrl("https://noowai.com/wp-json/mwai-ui/v1/chats/submit")
+                       .setProxy(m_cfg.http_proxy)
+                       .setRecvHeadersCallback([](std::string) { return; })
+                       .setRecvBodyCallback([&, recv_str = std::string{}](std::string recv) mutable {
+                           recv_str.append(std::move(recv));
+                           while (true) {
+                               auto position = recv_str.find("\n");
+                               if (position == std::string::npos)
+                                   break;
+                               auto msg = recv_str.substr(0, position + 1);
+                               recv_str.erase(0, position + 1);
+                               msg.pop_back();
+                               if (msg.empty())
+                                   continue;
+                               auto fields = splitString(msg, "data: ");
+                               nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                               if (line_json.is_discarded()) {
+                                   SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                                   boost::asio::post(ch->get_executor(), [=] {
+                                       ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                                   });
+                                   continue;
+                               }
+                               auto type = line_json["type"].get<std::string>();
+                               if (type == "live") {
+                                   auto str = line_json["data"].get<std::string>();
+                                   boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                               }
+                               if (type == "error")
+                                   boost::asio::post(ch->get_executor(),
+                                                     [=, str = fields.back()] { ch->try_send(err, str); });
+                           }
+                           return;
+                       })
+                       .setHttpHeaders([&] -> auto& {
+                           static std::unordered_multimap<std::string, std::string> headers{
+                               {"Accept", "*/*"},
+                               {"origin", "https://noowai.com"},
+                               {"referer", "https://noowai.com/"},
+                               {"Content-Type", "application/json"},
+                               {"Alt-Used", "noowai.com"},
+                           };
+                           return headers;
+                       }())
+                       .setBody([&] -> std::string {
+                           constexpr std::string_view ask_json_str = R"({
+                                "botId":"default",
+                                "customId":"d49bc3670c3d858458576d75c8ea0f5d",
+                                "session":"N/A",
+                                "chatId":"v82az2ltn2",
+                                "contextId":25,
+                                "messages":[
+                                    {
+                                        "role":"user",
+                                        "content":"hello"
+                                    }
+                                ],
+                                "newMessage":"hello",
+                                "stream":true
+                            })";
+                           nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                           ask_request["messages"] = getConversationJson(json);
+                           ask_request["newMessage"] =
+                               json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+                           ask_request["customId"] = createUuidString();
+                           ask_request["chatId"] = [](int len) -> std::string {
+                               static std::string chars{"abcdefghijklmnopqrstuvwxyz0123456789"};
+                               static std::string letter{"abcdefghijklmnopqrstuvwxyz"};
+                               std::random_device rd;
+                               std::mt19937 gen(rd());
+                               std::uniform_int_distribution<> dis(0, 1000000);
+                               std::string random_string;
+                               random_string += chars[dis(gen) % letter.length()];
+                               len = len - 1;
+                               for (int i = 0; i < len; i++)
+                                   random_string += chars[dis(gen) % chars.length()];
+                               return random_string;
+                           }(10);
+                           std::string ask_request_str = ask_request.dump();
+                           SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+                           return ask_request_str;
+                       }())
+                       .perform();
+        ret.has_value()) {
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
