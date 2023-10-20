@@ -1378,3 +1378,142 @@ boost::asio::awaitable<void> FreeGpt::vitalentum(std::shared_ptr<Channel> ch, nl
     });
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::chatGptAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    ScopeExit auto_exit{[&] { ch->close(); }};
+    boost::system::error_code err{};
+
+    constexpr std::string_view host = "chatgpt.ai";
+    constexpr std::string_view port = "443";
+
+    constexpr std::string_view user_agent{
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
+
+    boost::beast::http::request<boost::beast::http::empty_body> req{boost::beast::http::verb::get, "/", 11};
+    req.set(boost::beast::http::field::host, "chatgpt.ai");
+    req.set(boost::beast::http::field::user_agent, user_agent);
+    req.set("Accept", "*/*");
+
+    int recreate_num{0};
+create_client:
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    std::string chunk_body;
+    auto ret = co_await sendRequestRecvChunk(
+        ch, stream_, req, 200, [&ch, &chunk_body](std::string recv_str) { chunk_body.append(std::move(recv_str)); });
+    if (ret == Status::Close && recreate_num == 0) {
+        recreate_num++;
+        goto create_client;
+    }
+    if (ret == Status::HasError)
+        co_return;
+
+    static std::string pattern{
+        R"(data-nonce=".*"\n     data-post-id=".*"\n     data-url=".*"\n     data-bot-id=".*"\n     data-width)"};
+
+    std::vector<std::string> matches = findAll(pattern, chunk_body);
+    if (matches.size() != 1) {
+        SPDLOG_ERROR("parsing login failed");
+        co_await ch->async_send(err, chunk_body, use_nothrow_awaitable);
+        co_return;
+    }
+
+    std::regex reg("\"([^\"]*)\"");
+    std::sregex_iterator iter(matches[0].begin(), matches[0].end(), reg);
+    std::sregex_iterator end;
+    std::vector<std::string> results;
+    while (iter != end) {
+        results.emplace_back(iter->str(1));
+        iter++;
+    }
+    if (results.size() != 4) {
+        SPDLOG_ERROR("Failed to extract content");
+        co_await ch->async_send(err, "Failed to extract content", use_nothrow_awaitable);
+        co_return;
+    }
+
+    auto& nonce = results[0];
+    auto& post_id = results[1];
+    auto& data_url = results[2];
+    auto& bot_id = results[3];
+
+    SPDLOG_INFO("data_nonce: {}", nonce);
+    SPDLOG_INFO("data_post_id: {}", post_id);
+    SPDLOG_INFO("data_url: {}", data_url);
+    SPDLOG_INFO("data_bot_id: {}", bot_id);
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post,
+                                                                         "/wp-admin/admin-ajax.php", 11};
+    request.set(boost::beast::http::field::host, host);
+    request.set("authority", "chatgpt.ai");
+    request.set("accept", "*/*");
+    request.set("accept-language", R"(en,fr-FR;q=0.9,fr;q=0.8,es-ES;q=0.7,es;q=0.6,en-US;q=0.5,am;q=0.4,de;q=0.3)");
+    request.set("cache-control", "no-cache");
+    request.set("origin", "https://chatgpt.ai");
+    request.set("pragma", "no-cache");
+    request.set(boost::beast::http::field::referer, "https://chatgpt.ai/gpt-4/");
+    request.set("sec-ch-ua", R"("Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114")");
+    request.set("sec-ch-ua-mobile", "?0");
+    request.set("sec-ch-ua-platform", R"("Windows")");
+    request.set("sec-fetch-dest", "empty");
+    request.set("sec-fetch-mode", "cors");
+    request.set("sec-fetch-site", "same-origin");
+    request.set(boost::beast::http::field::user_agent, user_agent);
+    request.set("Content-Type", "application/x-www-form-urlencoded");
+
+    std::multimap<std::string, std::string> params{
+        {"message", std::format("user: {}\nassistant: ", prompt)},
+        {"_wpnonce", nonce},
+        {"post_id", post_id},
+        {"url", "https://chatgpt.ai"},
+        {"action", "wpaicg_chat_shortcode_message"},
+        {"bot_id", bot_id},
+    };
+    auto str = paramsToQueryStr(params);
+    SPDLOG_INFO("request: {}", str);
+    request.body() = str;
+    request.prepare_payload();
+
+    auto [ec, count] = co_await boost::beast::http::async_write(stream_, request, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        co_return;
+    }
+    boost::beast::flat_buffer buffer;
+    boost::beast::http::response<boost::beast::http::string_body> response;
+    std::tie(ec, count) = co_await boost::beast::http::async_read(stream_, buffer, response, use_nothrow_awaitable);
+    if (ec) {
+        SPDLOG_ERROR("{}", ec.message());
+        co_await ch->async_send(err, ec.message(), use_nothrow_awaitable);
+        co_return;
+    }
+    if (boost::beast::http::status::ok != response.result()) {
+        SPDLOG_ERROR("http code: {}", response.result_int());
+        co_await ch->async_send(err, response.reason(), use_nothrow_awaitable);
+        co_return;
+    }
+    std::stringstream ss;
+    ss << response.base();
+    SPDLOG_INFO("{}", ss.str());
+    SPDLOG_INFO("response.body(): {}", response.body());
+    nlohmann::json rsp = nlohmann::json::parse(response.body(), nullptr, false);
+    if (rsp.is_discarded()) {
+        SPDLOG_ERROR("json parse error");
+        co_await ch->async_send(err, "json parse error", use_nothrow_awaitable);
+        co_return;
+    }
+    SPDLOG_INFO("rsp: {}", rsp.dump());
+    co_await ch->async_send(err, rsp.value("data", rsp.dump()), use_nothrow_awaitable);
+    co_return;
+}

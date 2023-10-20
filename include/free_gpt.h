@@ -19,7 +19,6 @@ public:
     FreeGpt(Config&);
 
     boost::asio::awaitable<void> deepAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> chatGptAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> openAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> yqcloud(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> huggingChat(std::shared_ptr<Channel>, nlohmann::json);

@@ -334,7 +334,6 @@ int main(int argc, char** argv) {
     if (!cfg.api_key.empty())
         ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
 
-    ADD_METHOD("gpt-4-ChatgptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-stream-DeepAi", FreeGpt::deepAi);
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
     ADD_METHOD("gpt-OpenAssistant-stream-HuggingChat", FreeGpt::huggingChat)
