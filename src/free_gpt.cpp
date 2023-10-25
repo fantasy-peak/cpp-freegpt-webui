@@ -1227,65 +1227,56 @@ boost::asio::awaitable<void> FreeGpt::binjie(std::shared_ptr<Channel> ch, nlohma
 }
 
 boost::asio::awaitable<void> FreeGpt::chatBase(std::shared_ptr<Channel> ch, nlohmann::json json) {
-    boost::system::error_code err{};
-    ScopeExit auto_exit{[&] { ch->close(); }};
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
 
+    boost::system::error_code err{};
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
-    constexpr std::string_view host = "www.chatbase.co";
-    constexpr std::string_view port = "443";
+    static std::string chat_id{"z2c2HSfKnCTh5J4650V0I"};
+    Curl curl;
+    auto ret = curl.setUrl("https://www.chatbase.co/api/fe/chat")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       boost::asio::post(ch->get_executor(), [=, str = std::move(str)] { ch->try_send(err, str); });
+                       return;
+                   })
+                   .setHttpHeaders([&] -> auto& {
+                       static std::unordered_multimap<std::string, std::string> headers{
+                           {"Accept", "*/*"},
+                           {"origin", "https://www.chatbase.co"},
+                           {"referer", "https://www.chatbase.co/"},
+                       };
+                       return headers;
+                   }())
+                   .setBody([&] {
+                       constexpr std::string_view request_str{R"({
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "captchaCode":"hadsa",
+                            "chatId":"z2c2HSfKnCTh5J4650V0I",
+                            "conversationId":"kcXpqEnqUie3dnJlsRi_O-z2c2HSfKnCTh5J4650V0I"
+                        })"};
+                       nlohmann::json request = nlohmann::json::parse(request_str, nullptr, false);
+                       request["chatId"] = chat_id;
+                       request["conversationId"] = std::format("kcXpqEnqUie3dnJlsRi_O-{}", chat_id);
+                       request["messages"] = getConversationJson(json);
 
-    constexpr std::string_view user_agent{
-        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36)"};
-
-    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
-    ctx.set_verify_mode(boost::asio::ssl::verify_none);
-
-    auto client = co_await createHttpClient(ctx, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+                       auto str = request.dump();
+                       SPDLOG_INFO("request : [{}]", str);
+                       return str;
+                   }())
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://www.chatbase.co/api/fe/chat: [{}]", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
         co_return;
     }
-    auto& stream_ = client.value();
-
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/fe/chat",
-                                                                     11};
-    req.set(boost::beast::http::field::host, host);
-    req.set(boost::beast::http::field::user_agent, user_agent);
-    req.set("Accept", "*/*");
-    req.set("accept-language", "en,fr-FR;q=0.9,fr;q=0.8,es-ES;q=0.7,es;q=0.6,en-US;q=0.5,am;q=0.4,de;q=0.3");
-    req.set("origin", "https://www.chatbase.co");
-    req.set("referer", "https://www.chatbase.co/");
-    req.set(boost::beast::http::field::content_type, "application/json");
-    req.set("sec-fetch-dest", "empty");
-    req.set("sec-fetch-mode", "cors");
-    req.set("sec-fetch-site", "same-origin");
-
-    constexpr std::string_view json_str = R"({
-        "messages": [
-            {
-                "role": "user",
-                "content": "hello"
-            }
-        ],
-        "captchaCode": "hadsa",
-        "chatId": "quran---tafseer-saadi-pdf-wbgknt7zn",
-        "conversationId": "kcXpqEnqUie3dnJlsRi_O-quran---tafseer-saadi-pdf-wbgknt7zn"
-    })";
-    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-
-    request["messages"][0]["content"] = prompt;
-    SPDLOG_INFO("{}", request.dump(2));
-
-    req.body() = request.dump();
-    req.prepare_payload();
-
-    auto result = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string str) {
-        boost::system::error_code err{};
-        if (!str.empty())
-            ch->try_send(err, str);
-    });
     co_return;
 }
 
@@ -1649,7 +1640,7 @@ boost::asio::awaitable<void> FreeGpt::freeGpt(std::shared_ptr<Channel> ch, nlohm
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     Curl curl;
-    auto ret = curl.setUrl("https://r.aifree.site/api/generate")
+    auto ret = curl.setUrl("https://s.aifree.site/api/generate")
                    .setProxy(m_cfg.http_proxy)
                    .setRecvBodyCallback([&](std::string str) mutable {
                        boost::asio::post(ch->get_executor(), [=, str = std::move(str)] { ch->try_send(err, str); });
@@ -2400,12 +2391,14 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
         }(),
         .body = [&] -> std::string {
             constexpr std::string_view ask_json_str = R"({
-                "prompt": "[INST] hello [/INST]\n",
-                "version": "2796ee9483c3fd7aa2e171d38f4ca12251a30609463dcfd4cd76703f22e96cdf",
-                "systemPrompt": "You are a helpful assistant.",
-                "temperature": 0.75,
-                "topP": 0.9,
-                "maxTokens": 800
+                "prompt":"[INST] hello [/INST]\n[INST] hello [/INST]\n",
+                "version":"d24902e3fa9b698cc208b5e63136c4e26e828659a9f09827ca6ec5bb83014381",
+                "systemPrompt":"You are a helpful assistant.",
+                "temperature":0.75,
+                "topP":0.9,
+                "maxTokens":800,
+                "image":null,
+                "audio":null
             })";
             nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
             ask_request["prompt"] = std::format("[INST] {} [/INST]\n", prompt);
