@@ -3042,3 +3042,121 @@ boost::asio::awaitable<void> FreeGpt::fakeGpt(std::shared_ptr<Channel> ch, nlohm
         co_return;
     }
 }
+
+boost::asio::awaitable<void> FreeGpt::vercel(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    boost::system::error_code err{};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    auto create_random_number = [] {
+        std::random_device rd;
+        std::mt19937 mt(rd());
+        std::uniform_int_distribution<int> distribution(99, 999);
+        int random_number = distribution(mt);
+        return random_number;
+    };
+    constexpr std::string_view user_agent_str{
+        R"(Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.{}.{} Safari/537.36)"};
+
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"authority", "sdk.vercel.ai"},
+        {"content-type", "application/json"},
+        {"referer", "https://sdk.vercel.ai/"},
+        {"origin", "https://sdk.vercel.ai"},
+        {"sec-ch-ua", R"("Google Chrome";v="117", "Not;A=Brand";v="8", "Chromium";v="117")"},
+        {"sec-ch-ua-mobile", R"(?0)"},
+        {"sec-ch-ua-platform", R"("macOS")"},
+        {"cache-control", "no-cache"},
+        {"pragma", "no-cache"},
+    };
+    headers.emplace("user-agent", std::format(user_agent_str, create_random_number(), create_random_number()));
+
+    std::string recv;
+    Curl curl;
+    auto ret = curl.setUrl("https://sdk.vercel.ai/openai.jpeg")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       recv.append(str);
+                       return;
+                   })
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://sdk.vercel.ai/openai.jpeg: [{}]", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    nlohmann::json request;
+    request["data"] = std::move(recv);
+    recv.clear();
+    auto vercel_rsp = callZeus(std::format("{}/vercel", m_cfg.zeus), request.dump());
+    if (!vercel_rsp.has_value()) {
+        SPDLOG_ERROR("callZeus vercel error: {}", vercel_rsp.error());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, vercel_rsp.error());
+        co_return;
+    }
+
+    headers.erase("custom-encoding");
+    headers.erase("user-agent");
+    headers.emplace("custom-encoding", vercel_rsp.value()["data"]);
+    headers.emplace("user-agent", std::format(user_agent_str, create_random_number(), create_random_number()));
+
+    for (int i = 0; i < 20; i++) {
+        auto ret =
+            curl.setUrl("https://sdk.vercel.ai/api/generate")
+                .setProxy(m_cfg.http_proxy)
+                .setRecvHeadersCallback([](std::string) { return; })
+                .setRecvBodyCallback([&](std::string str) mutable {
+                    if (str == "Internal Server Error" || str == "Rate limit exceeded") {
+                        SPDLOG_WARN("vercel: [{}]", str);
+                        return;
+                    }
+                    boost::asio::post(ch->get_executor(), [=, str = std::move(str)] { ch->try_send(err, str); });
+                    return;
+                })
+                .setBody([&] {
+                    constexpr std::string_view json_str = R"({
+                            "model":"openai:gpt-3.5-turbo",
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "playgroundId":"403bce4c-7eb6-47b0-b1b5-0cb6b2469f70",
+                            "chatIndex":0,
+                            "temperature":0.7,
+                            "maximumLength":4096,
+                            "topP":1,
+                            "topK":1,
+                            "presencePenalty":1,
+                            "frequencyPenalty":1,
+                            "stopSequences":[]
+                        })";
+                    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+                    request["messages"] = getConversationJson(json);
+                    request["playgroundId"] = createUuidString();
+                    SPDLOG_INFO("request: [{}]", request.dump(2));
+                    return request.dump();
+                }())
+                .clearHeaders()
+                .setHttpHeaders(headers)
+                .perform();
+        if (ret.has_value()) {
+            SPDLOG_WARN("https://sdk.vercel.ai/api/generate: [{}]", ret.value());
+            co_await timeout(std::chrono::seconds(2));
+            continue;
+        }
+        co_return;
+    }
+    co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+    ch->try_send(err, "call sdk.vercel.ai error");
+    co_return;
+}
