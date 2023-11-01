@@ -79,7 +79,7 @@ const ask_gpt = async (message) => {
                 <i class="fa fa-trash trash-icon" onclick="deleteMessage('${token}')"></i>
             </div>
         `;
-        console.log(message_box.innerHTML)
+        // console.log(message_box.innerHTML)
         message_box.scrollTop = message_box.scrollHeight;
         window.scrollTo(0, 0);
         await new Promise((r) => setTimeout(r, 500));
@@ -172,7 +172,7 @@ const ask_gpt = async (message) => {
 
         await load_conversations(20, 0);
 
-        console.log(e);
+        // console.log(e);
 
         let cursorDiv = document.getElementById(`cursor`);
         if (cursorDiv) cursorDiv.parentNode.removeChild(cursorDiv);
@@ -273,7 +273,7 @@ const load_conversation = async (conversation_id) => {
     let conversation = await JSON.parse(
         localStorage.getItem(`conversation:${conversation_id}`)
     );
-    console.log(conversation, conversation_id);
+    // console.log(conversation, conversation_id);
 
     for (item of conversation.items) {
         message_box.innerHTML += `
@@ -321,8 +321,8 @@ const get_conversation = async (conversation_id) => {
     let result = conversation.items.slice(-4)
     for (var i = 0; i < result.length; i++) {
         delete result[i].token;
-        console.log(result[i]);
-        console.log(result[i]);
+        // console.log(result[i]);
+        // console.log(result[i]);
     }
     return result;
 };
@@ -592,15 +592,15 @@ const observer = new MutationObserver((mutationsList) => {
 observer.observe(message_input, { attributes: true });
 
 function deleteMessage(token) {
-    console.log(token)
+    // console.log(token)
     const messageDivUser = document.getElementById(`user_${token}`)
     const messageDivGpt = document.getElementById(`gpt_${token}`)
     if (messageDivUser) messageDivUser.parentNode.remove();
     if (messageDivGpt) messageDivGpt.parentNode.remove();
     const conversation = JSON.parse(localStorage.getItem(`conversation:${window.conversation_id}`));
-    console.log(conversation)
+    // console.log(conversation)
     conversation.items = conversation.items.filter(item => item.token !== token);
-    console.log(conversation)
+    // console.log(conversation)
     localStorage.setItem(`conversation:${window.conversation_id}`, JSON.stringify(conversation));
 
     const messages = document.getElementsByClassName("message");
