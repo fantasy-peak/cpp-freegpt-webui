@@ -1,5 +1,7 @@
 # Cpp FreeGPT WebUI
 
+[![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-gcc13/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-clang18/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions)
+
 ## GPT 3.5/4
 
 <strong>NOT REQUIRE ANY API KEY</strong> ❌🔑
@@ -29,9 +31,7 @@ To run the application, run the following command:
 1. Check local g++ version, need g++ version >= gcc version 13.1.0 (GCC)
 
 2. install xmake
-wget https://github.com/xmake-io/xmake/releases/download/v2.8.2/xmake-v2.8.2.xz.run
-chmod 777 xmake-v2.8.2.xz.run
-./xmake-v2.8.2.xz.run
+curl -kfsSL https://xmake.io/shget.text | bash -s v2.8.3
 source ~/.xmake/profile
 
 3. install libcurl-impersonate, ubuntu (apt-get install libcurl4-openssl-dev) centos7 (yum install libcurl-devel.x86_64)
@@ -64,25 +64,52 @@ docker pull fantasypeak/freegpt:latest
 
 Run the application using Docker:
 ```
-docker run -p 8858:8858 -it --name freegpt fantasypeak/freegpt:latest
-// OR
-docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
-// use http_proxy
-docker run -p 8858:8858 -it --name freegpt -e HTTP_PROXY=http://127.0.0.1:8080 -e CHAT_PATH=/chat fantasypeak/freegpt:latest
-// set active providers
-docker run -p 8858:8858 -it --name freegpt -e CHAT_PATH=/chat -e PROVIDERS="[\"gpt-4-ChatgptAi\",\"gpt-3.5-turbo-stream-DeepAi\"]" fantasypeak/freegpt:latest
-// enable ip white list function
-docker run -p 8858:8858 -it --name freegpt -e IP_WHITE_LIST="[\"127.0.0.1\",\"192.168.1.1\"]" fantasypeak/freegpt:latest
+docker run -it --rm \
+   -p 8858:8858 \
+   --name freegpt \
+   fantasypeak/freegpt:latest
+```
+Run the application(use http proxy) using Docker:
+```
+docker run --rm -it \
+   -p 8858:8858 \
+   --name freegpt \
+   -e HTTP_PROXY=http://127.0.0.1:8080 \
+   fantasypeak/freegpt:latest
+```
+
+Configurable environment variables
+```
+01. CHAT_PATH=/chat
+02. HTTP_PROXY=http://127.0.0.1:8080
+03. PROVIDERS="[\"gpt-4-ChatgptAi\",\"gpt-3.5-turbo-stream-DeepAi\"]"
+04. IP_WHITE_LIST="[\"127.0.0.1\",\"192.168.1.1\"]"
+05. PORT=8858
+06. HOST=0.0.0.0
+07. WORK_THREAD_NUM=8
+08. INTERVAL=300
+09. ZEUS=http://127.0.0.1:8860
+10. FLARESOLVERR=http://127.0.0.1:8191/v1
 ```
 
 ### Start the Zeus Service [optional]
 This is not necessary, Zeus is a cpp-freegpt-webui auxiliary service, because some provider needs to perform specific operations such as get cookies and refreshing web pages etc.
 If you need to use these specific providers, you need to start it(Zeus Docker)
+
+Start zeus service
 ```
-docker pull fantasypeak/freegpt-zeus:latest
-docker run --net=host -it --name zeus fantasypeak/freegpt-zeus:latest
-docker pull fantasypeak/freegpt:latest
-docker run --net=host -it --name freegpt fantasypeak/freegpt:latest
+docker run -d \
+  --name=zeus \
+  -p 8860:8860 \
+  --rm \
+  fantasypeak/freegpt-zeus:latest
+```
+Start the application
+```
+docker run -it --rm \
+   --net=host \
+   --name freegpt \
+   fantasypeak/freegpt:latest
 ```
 
 ### Start the flaresolverr docker [optional]
@@ -97,9 +124,13 @@ docker run -d \
 ```
 
 ### Call OpenAi Api
+It supports calling OpenAI's API, but need set API_KEY
 ```
-// It supports calling OpenAI's API, but need set API_KEY
-docker run -p 8858:8858 -it --name freegpt -e CHAT_PATH=/chat -e API_KEY=a40f22f2-c1a2-4b1d-a47f-55ae1a7ddbed fantasypeak/freegpt:latest
+docker run --rm -it \
+   -p 8858:8858 \
+   --name freegpt \
+   -e API_KEY=a40f22f2-c1a2-4b1d-a47f-55ae1a7ddbed \
+   fantasypeak/freegpt:latest
 ```
 
 ### WebUI
