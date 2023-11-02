@@ -21,27 +21,6 @@
 
 namespace {
 
-// clang-format off
-namespace detail {
-
-template <typename C>
-struct to_helper {};
-
-template <typename Container, std::ranges::range R>
-    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
-Container operator|(R&& r, to_helper<Container>) {
-    return Container{r.begin(), r.end()};
-}
-
-}  // namespace detail
-
-template <std::ranges::range Container>
-    requires(!std::ranges::view<Container>)
-inline auto to() {
-    return detail::to_helper<Container>{};
-}
-// clang-format on
-
 std::string md5(const std::string& str, bool reverse = true) {
     unsigned char hash[MD5_DIGEST_LENGTH];
 
@@ -391,6 +370,8 @@ public:
         if (m_curl)
             curl_easy_cleanup(m_curl);
     }
+    Curl(const Curl&) = delete;
+    Curl& operator=(const Curl&) = delete;
 
     auto& setUrl(std::string_view url) {
         m_url = url;
@@ -2245,75 +2226,45 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
-    struct Input {
-        std::shared_ptr<Channel> ch;
-        std::string recv;
+    static std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"origin", "https://www.llama2.ai"},
+        {"referer", "https://www.llama2.ai/"},
+        {"Content-Type", "text/plain;charset=UTF-8"},
     };
-    Input input;
+    auto ret = Curl()
+                   .setUrl("https://www.llama2.ai/api")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       boost::asio::post(ch->get_executor(), [=, str = std::move(str)] { ch->try_send(err, str); });
+                       return;
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "prompt":"[INST] hello [/INST]\n[INST] hello [/INST]\n",
+                            "version":"d24902e3fa9b698cc208b5e63136c4e26e828659a9f09827ca6ec5bb83014381",
+                            "systemPrompt":"You are a helpful assistant.",
+                            "temperature":0.75,
+                            "topP":0.9,
+                            "maxTokens":800,
+                            "image":null,
+                            "audio":null
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["prompt"] = std::format("[INST] {} [/INST]\n", prompt);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
 
-    CURLcode res;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
-
-    auto ret = sendHttpRequest(CurlHttpRequest{
-        .curl = curl,
-        .url = "https://www.llama2.ai/api",
-        .http_proxy = m_cfg.http_proxy,
-        .cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
-            auto input_ptr = static_cast<Input*>(userp);
-            std::string data{(char*)contents, size * nmemb};
-            auto& [ch, recv] = *input_ptr;
-            boost::asio::post(ch->get_executor(), [=] {
-                boost::system::error_code err{};
-                ch->try_send(err, data);
-            });
-            return size * nmemb;
-        },
-        .input = [&] -> void* {
-            input.recv.clear();
-            input.ch = ch;
-            return &input;
-        }(),
-        .headers = [&] -> auto& {
-            static std::unordered_map<std::string, std::string> headers{
-                {"Accept", "*/*"},
-                {"origin", "https://www.llama2.ai"},
-                {"referer", "https://www.llama2.ai/"},
-                {"Content-Type", "text/plain;charset=UTF-8"},
-            };
-            return headers;
-        }(),
-        .body = [&] -> std::string {
-            constexpr std::string_view ask_json_str = R"({
-                "prompt":"[INST] hello [/INST]\n[INST] hello [/INST]\n",
-                "version":"d24902e3fa9b698cc208b5e63136c4e26e828659a9f09827ca6ec5bb83014381",
-                "systemPrompt":"You are a helpful assistant.",
-                "temperature":0.75,
-                "topP":0.9,
-                "maxTokens":800,
-                "image":null,
-                "audio":null
-            })";
-            nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
-            ask_request["prompt"] = std::format("[INST] {} [/INST]\n", prompt);
-            std::string ask_request_str = ask_request.dump();
-            SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
-            return ask_request_str;
-        }(),
-        .response_header_ptr = nullptr,
-        .expect_response_code = 200,
-        .ssl_verify = false,
-    });
     if (ret) {
+        SPDLOG_ERROR("https://www.llama2.ai/api: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
-        co_return;
     }
     co_return;
 }
@@ -2418,102 +2369,77 @@ boost::asio::awaitable<void> FreeGpt::geekGpt(std::shared_ptr<Channel> ch, nlohm
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
     boost::system::error_code err{};
-
-    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-
-    struct Input {
-        std::shared_ptr<Channel> ch;
-        std::string recv;
+    static std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"authority", "ai.fakeopen.com"},
+        {"content-type", "application/json"},
+        {"referer", "https://chat.geekgpt.org/"},
+        {"origin", "https://chat.geekgpt.org"},
+        {"sec-ch-ua", R"("Google Chrome";v="117", "Not;A=Brand";v="8", "Chromium";v="117")"},
+        {"sec-ch-ua-mobile", R"(?0)"},
+        {"sec-ch-ua-platform", R"("macOS")"},
+        {"cache-control", "no-cache"},
+        {"pragma", "no-cache"},
+        {"authorization", "Bearer pk-this-is-a-real-free-pool-token-for-everyone"},
     };
-    Input input;
-
-    CURLcode res;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
-
-    auto ret = sendHttpRequest(CurlHttpRequest{
-        .curl = curl,
-        .url = "https://ai.fakeopen.com/v1/chat/completions",
-        .http_proxy = m_cfg.http_proxy,
-        .cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
-            auto input_ptr = static_cast<Input*>(userp);
-            std::string data{(char*)contents, size * nmemb};
-            auto& [ch, recv] = *input_ptr;
-            recv.append(data);
-            while (true) {
-                auto position = recv.find("\n");
-                if (position == std::string::npos)
-                    break;
-                auto msg = recv.substr(0, position + 1);
-                recv.erase(0, position + 1);
-                msg.pop_back();
-                if (msg.empty() || !msg.contains("content"))
-                    continue;
-                auto fields = splitString(msg, "data: ");
-                boost::system::error_code err{};
-                nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
-                if (line_json.is_discarded()) {
-                    SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                    boost::asio::post(ch->get_executor(), [=] {
-                        ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
-                    });
-                    continue;
-                }
-                auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
-                if (!str.empty() && str != "[DONE]")
-                    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
-            }
-            return size * nmemb;
-        },
-        .input = [&] -> void* {
-            input.recv.clear();
-            input.ch = ch;
-            return &input;
-        }(),
-        .headers = [&] -> auto& {
-            static std::unordered_map<std::string, std::string> headers{
-                {"Accept", "*/*"},
-                {"origin", "https://chat.geekgpt.org"},
-                {"referer", "https://chat.geekgpt.org/"},
-                {"Content-Type", "application/json"},
-                {"authority", "ai.fakeopen.com"},
-                {"authorization", "Bearer pk-this-is-a-real-free-pool-token-for-everyone"},
-            };
-            return headers;
-        }(),
-        .body = [&] -> std::string {
-            constexpr std::string_view ask_json_str = R"({
-                "messages": [{
-                    "role": "user",
-                    "content": "hello"
-                }],
-                "model": "gpt-3.5-turbo",
-                "temperature": 0.9,
-                "presence_penalty": 0,
-                "top_p": 1,
-                "frequency_penalty": 0,
-                "stream": true
-            })";
-            nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
-            ask_request["messages"] = getConversationJson(json);
-            std::string ask_request_str = ask_request.dump();
-            SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
-            return ask_request_str;
-        }(),
-        .response_header_ptr = nullptr,
-        .expect_response_code = 200,
-        .ssl_verify = false,
-    });
-    if (ret) {
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://ai.fakeopen.com/v1/chat/completions")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       recv.append(str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               boost::asio::post(ch->get_executor(), [=] {
+                                   ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               });
+                               continue;
+                           }
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty() && str != "[DONE]")
+                               boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                       }
+                       return;
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "messages": [{
+                                "role": "user",
+                                "content": "hello"
+                            }],
+                            "model": "gpt-3.5-turbo",
+                            "temperature": 0.9,
+                            "presence_penalty": 0,
+                            "top_p": 1,
+                            "frequency_penalty": 0,
+                            "stream": true
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://ai.fakeopen.com/v1/chat/completions: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
-        co_return;
     }
     co_return;
 }

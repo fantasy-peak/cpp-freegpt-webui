@@ -101,3 +101,24 @@ inline std::string createUuidString() {
     static thread_local boost::uuids::random_generator gen;
     return boost::uuids::to_string(gen());
 }
+
+// clang-format off
+namespace detail {
+
+template <typename C>
+struct to_helper {};
+
+template <typename Container, std::ranges::range R>
+    requires std::convertible_to<std::ranges::range_value_t<R>, typename Container::value_type>
+Container operator|(R&& r, to_helper<Container>) {
+    return Container{r.begin(), r.end()};
+}
+
+}  // namespace detail
+
+template <std::ranges::range Container>
+    requires(!std::ranges::view<Container>)
+inline auto to() {
+    return detail::to_helper<Container>{};
+}
+// clang-format on

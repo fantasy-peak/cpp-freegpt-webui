@@ -316,7 +316,7 @@ boost::asio::awaitable<void> doSession(boost::asio::ip::tcp::acceptor& acceptor,
     co_return;
 }
 
-int main(int argc, char** argv) {
+int main(int, char** argv) {
     curl_global_init(CURL_GLOBAL_ALL);
     ScopeExit cleanup{[=] { curl_global_cleanup(); }};
 
