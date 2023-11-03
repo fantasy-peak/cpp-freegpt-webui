@@ -1398,3 +1398,115 @@ boost::asio::awaitable<void> FreeGpt::aibn(std::shared_ptr<Channel> ch, nlohmann
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+
+    boost::system::error_code err{};
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    CURLcode res;
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    curl_easy_setopt(curl, CURLOPT_URL, "https://chatgpt4online.org/wp-json/mwai-ui/v1/chats/submit");
+    if (!m_cfg.http_proxy.empty())
+        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
+
+    struct Input {
+        std::shared_ptr<Channel> ch;
+        std::string recv;
+    };
+    Input input{ch};
+    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
+        auto input_ptr = static_cast<Input*>(userp);
+        std::string data{(char*)contents, size * nmemb};
+        auto& [ch, recv] = *input_ptr;
+        recv.append(data);
+        while (true) {
+            auto position = recv.find("\n");
+            if (position == std::string::npos)
+                break;
+            auto msg = recv.substr(0, position + 1);
+            recv.erase(0, position + 1);
+            msg.pop_back();
+            if (msg.empty())
+                continue;
+            auto fields = splitString(msg, "data: ");
+            boost::system::error_code err{};
+            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                boost::asio::post(ch->get_executor(),
+                                  [=] { ch->try_send(err, std::format("json parse error: [{}]", fields.back())); });
+                continue;
+            }
+            auto type = line_json["type"].get<std::string>();
+            if (type == "live") {
+                auto str = line_json["data"].get<std::string>();
+                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+            }
+        }
+        return size * nmemb;
+    };
+    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
+    curlEasySetopt(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
+
+    constexpr std::string_view request_str{R"({
+        "botId":"default",
+        "customId":null,
+        "session":"N/A",
+        "chatId":"",
+        "contextId":58,
+        "messages":[
+            {
+                "role":"user",
+                "content":"hello"
+            }
+        ],
+        "newMessage":"hello",
+        "stream":true
+    })"};
+    nlohmann::json request = nlohmann::json::parse(request_str, nullptr, false);
+
+    request["messages"] = getConversationJson(json);
+    request["newMessage"] = prompt;
+
+    auto str = request.dump();
+    SPDLOG_INFO("request : [{}]", str);
+
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, str.c_str());
+
+    struct curl_slist* headers = nullptr;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    ScopeExit auto_exit{[=] {
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }};
+
+    res = curl_easy_perform(curl);
+
+    if (res != CURLE_OK) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+        ch->try_send(err, error_info);
+        co_return;
+    }
+    int32_t response_code;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
+    if (response_code != 200) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("you http code:{}", response_code));
+        co_return;
+    }
+    co_return;
+}
