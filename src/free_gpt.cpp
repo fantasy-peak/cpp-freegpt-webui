@@ -244,16 +244,6 @@ create_client:
     co_return std::make_tuple(res, std::move(ctx), std::move(stream_));
 }
 
-void curlEasySetopt(CURL* curl) {
-    curl_easy_setopt(curl, CURLOPT_CAINFO, nullptr);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 20L);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 30L);
-}
-
 auto getConversationJson(const nlohmann::json& json) {
     auto conversation = json.at("meta").at("content").at("conversation");
     conversation.push_back(json.at("meta").at("content").at("parts").at(0));
@@ -542,9 +532,9 @@ FreeGpt::createHttpClient(boost::asio::ssl::context& ctx, std::string_view host,
 
 boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
 
     boost::system::error_code err{};
-    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     std::string user_agent{
@@ -560,75 +550,41 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
     constexpr char CRLF[] = "\r\n";
     static std::string MULTI_PART_BOUNDARY = "9bc627aea4f77e150e6057f78036e73f";
 
-    CURLcode res;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    curl_easy_setopt(curl, CURLOPT_URL, "https://api.deepai.org/hacking_is_a_crime");
-
-    if (!m_cfg.http_proxy.empty())
-        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-
-    struct Input {
-        std::shared_ptr<Channel> ch;
-        std::string recv;
-    };
-    Input input{ch};
-    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-        boost::system::error_code err{};
-        auto input_ptr = static_cast<Input*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        auto& [ch, recv] = *input_ptr;
-        boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, data); });
-        return size * nmemb;
-    };
-    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
-    curlEasySetopt(curl);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-
-    nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
-
-    std::ostringstream payload;
-    payload << "--" << MULTI_PART_BOUNDARY << CRLF << R"(Content-Disposition: form-data; name="chat_style")" << CRLF
-            << CRLF << "chat" << CRLF << "--" << MULTI_PART_BOUNDARY << CRLF
-            << R"(Content-Disposition: form-data; name="chatHistory")" << CRLF << CRLF << request_json.dump() << CRLF
-            << "--" << MULTI_PART_BOUNDARY << "--" << CRLF;
-    SPDLOG_INFO("{}", payload.str());
-    auto str = payload.str();
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, str.c_str());
-
-    struct curl_slist* headers = nullptr;
-    auto content_type_str = std::format("Content-Type: multipart/form-data; boundary={}", MULTI_PART_BOUNDARY);
+    auto content_type_str = std::format("multipart/form-data; boundary={}", MULTI_PART_BOUNDARY);
     SPDLOG_INFO("content_type_str: {}", content_type_str);
-    headers = curl_slist_append(headers, content_type_str.c_str());
     auto api_key_str = std::format("api-key: {}", api_key);
-    headers = curl_slist_append(headers, api_key_str.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-    ScopeExit auto_exit{[=] {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-    }};
-
-    res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Content-Type", content_type_str},
+        {"api-key", api_key},
+    };
+    auto ret = Curl()
+                   .setUrl("https://api.deepai.org/hacking_is_a_crime")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([&](std::string) {})
+                   .setRecvBodyCallback([&](std::string str) {
+                       boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                       return;
+                   })
+                   .setBody([&] {
+                       nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
+                       std::ostringstream payload;
+                       payload << "--" << MULTI_PART_BOUNDARY << CRLF
+                               << R"(Content-Disposition: form-data; name="chat_style")" << CRLF << CRLF << "chat"
+                               << CRLF << "--" << MULTI_PART_BOUNDARY << CRLF
+                               << R"(Content-Disposition: form-data; name="chatHistory")" << CRLF << CRLF
+                               << request_json.dump() << CRLF << "--" << MULTI_PART_BOUNDARY << "--" << CRLF;
+                       SPDLOG_INFO("{}", payload.str());
+                       auto str = payload.str();
+                       return str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("api.deepai.org: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    int32_t response_code;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("deepai http code:{}", response_code));
-        co_return;
+        ch->try_send(err, ret.value());
     }
     co_return;
 }
@@ -1161,19 +1117,10 @@ boost::asio::awaitable<void> FreeGpt::chatBase(std::shared_ptr<Channel> ch, nloh
 
 boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
 
     boost::system::error_code err{};
-    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
-
-    CURLcode res;
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
-        co_return;
-    }
 
     std::multimap<std::string, std::string> params{
         {"q", prompt},
@@ -1181,112 +1128,76 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
         {"hl", "en"},
     };
     auto get_token_url = std::format("https://gptgo.ai/action_get_token.php?{}", paramsToQueryStr(params));
-    curl_easy_setopt(curl, CURLOPT_URL, get_token_url.c_str());
-    if (!m_cfg.http_proxy.empty())
-        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-    auto cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-        auto recv_ptr = static_cast<std::string*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        recv_ptr->append(data);
-        return size * nmemb;
-    };
-    std::string recv_str;
-    size_t (*fn)(void* contents, size_t size, size_t nmemb, void* userp) = cb;
-    curlEasySetopt(curl);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &recv_str);
 
-    ScopeExit auto_exit{[=] { curl_easy_cleanup(curl); }};
-    res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
-        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+    std::string recv;
+    Curl curl;
+    auto ret = curl.setUrl(get_token_url)
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvBodyCallback([&](std::string str) {
+                       recv.append(str);
+                       return;
+                   })
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("action_get_token: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
+        ch->try_send(err, ret.value());
         co_return;
     }
-    int32_t response_code;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("gptGo http code:{}", response_code));
-        co_return;
-    }
-    SPDLOG_INFO("recv_str: [{}]", recv_str);
-    nlohmann::json line_json = nlohmann::json::parse(recv_str, nullptr, false);
+    SPDLOG_INFO("recv: [{}]", recv);
+    nlohmann::json line_json = nlohmann::json::parse(recv, nullptr, false);
     if (line_json.is_discarded()) {
-        SPDLOG_ERROR("json parse error: [{}]", recv_str);
+        SPDLOG_ERROR("json parse error: [{}]", recv);
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("json parse error:{}", recv_str));
+        ch->try_send(err, std::format("json parse error:{}", recv));
         co_return;
     }
     auto status = line_json["status"].get<bool>();
     if (!status) {
-        SPDLOG_ERROR("status is false: [{}]", recv_str);
+        SPDLOG_ERROR("status is false: [{}]", recv);
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, recv_str);
+        ch->try_send(err, recv);
         co_return;
     }
     auto token = line_json["token"].get<std::string>();
     SPDLOG_INFO("token: [{}]", token);
 
+    recv.clear();
     auto url = std::format("https://gptgo.ai/action_ai_gpt.php?token={}", token);
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    if (!m_cfg.http_proxy.empty())
-        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-
-    struct Input {
-        std::shared_ptr<Channel> ch;
-        std::string recv;
-    };
-    Input input{ch};
-    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-        auto input_ptr = static_cast<Input*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        auto& [ch, recv] = *input_ptr;
-        recv.append(data);
-        while (true) {
-            auto position = recv.find("\n");
-            if (position == std::string::npos)
-                break;
-            auto msg = recv.substr(0, position + 1);
-            recv.erase(0, position + 1);
-            msg.pop_back();
-            if (msg.empty() || !msg.contains("content"))
-                continue;
-            auto fields = splitString(msg, "data: ");
-            boost::system::error_code err{};
-            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
-            if (line_json.is_discarded()) {
-                SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                boost::asio::post(ch->get_executor(),
-                                  [=] { ch->try_send(err, std::format("json parse error: [{}]", fields.back())); });
-                continue;
-            }
-            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
-            if (!str.empty() && str != "[DONE]")
-                boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
-        }
-        return size * nmemb;
-    };
-    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
-    curlEasySetopt(curl);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-
-    res = curl_easy_perform(curl);
-
-    if (res != CURLE_OK) {
+    ret = curl.setUrl(url)
+              .setProxy(m_cfg.http_proxy)
+              .setRecvBodyCallback([&](std::string str) {
+                  recv.append(str);
+                  while (true) {
+                      auto position = recv.find("\n");
+                      if (position == std::string::npos)
+                          break;
+                      auto msg = recv.substr(0, position + 1);
+                      recv.erase(0, position + 1);
+                      msg.pop_back();
+                      if (msg.empty() || !msg.contains("content"))
+                          continue;
+                      auto fields = splitString(msg, "data: ");
+                      boost::system::error_code err{};
+                      nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                      if (line_json.is_discarded()) {
+                          SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                          boost::asio::post(ch->get_executor(), [=] {
+                              ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                          });
+                          continue;
+                      }
+                      auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                      if (!str.empty() && str != "[DONE]")
+                          boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                  }
+                  return;
+              })
+              .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("action_ai_gpt: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("you http code:{}", response_code));
-        co_return;
+        ch->try_send(err, ret.value());
     }
     co_return;
 }
@@ -1436,8 +1347,8 @@ boost::asio::awaitable<void> FreeGpt::freeGpt(std::shared_ptr<Channel> ch, nlohm
 boost::asio::awaitable<void> FreeGpt::gptalk(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
-    boost::system::error_code err{};
 
+    boost::system::error_code err{};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     auto generate_token_hex = [](int32_t length) {
@@ -1452,222 +1363,156 @@ boost::asio::awaitable<void> FreeGpt::gptalk(std::shared_ptr<Channel> ch, nlohma
         return token;
     };
 
-    CURLcode res;
-    int32_t response_code;
-
-    struct Input {
-        std::shared_ptr<Channel> ch;
-        std::string recv;
-        std::string last_message;
-    };
-    Input input{ch};
-
-    CURL* curl = curl_easy_init();
-    if (!curl) {
-        auto error_info = std::format("curl_easy_init() failed:{}", curl_easy_strerror(res));
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    curl_easy_setopt(curl, CURLOPT_URL, "https://gptalk.net/api/chatgpt/user/login");
-
-    if (!m_cfg.http_proxy.empty())
-        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-    curlEasySetopt(curl);
-    nlohmann::json login_json;
-    login_json["fingerprint"] = generate_token_hex(16);
-    login_json["platform"] = "fingerprint";
-    std::string request_str = login_json.dump();
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_str.c_str());
-
-    auto action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-        auto input_ptr = static_cast<Input*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        auto& [ch, recv, _] = *input_ptr;
-        recv.append(data);
-        return size * nmemb;
-    };
-    size_t (*action_fn)(void* contents, size_t size, size_t nmemb, void* userp) = action_cb;
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, action_fn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-
-    struct curl_slist* headers = nullptr;
-    headers = curl_slist_append(headers, "Content-Type: application/json");
-    headers = curl_slist_append(headers, "authority: gptalk.net");
-    headers = curl_slist_append(headers, "origin: https://gptalk.net");
-    headers = curl_slist_append(headers, "Accept: */*");
-    headers = curl_slist_append(headers, "x-auth-appid: 2229");
-    headers = curl_slist_append(headers, "x-auth-openid: ");
-    headers = curl_slist_append(headers, "x-auth-platform: ");
     uint64_t timestamp = getTimestamp<std::chrono::seconds>();
-    auto auth_timestamp = std::format("x-auth-timestamp: {}", timestamp);
-    headers = curl_slist_append(headers, auth_timestamp.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    ScopeExit auto_exit{[=] {
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-    }};
-
-    res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
+    std::string recv;
+    Curl curl;
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},           {"Content-Type", "application/json"},
+        {"authority", "gptalk.net"}, {"origin", "https://gptalk.net"},
+        {"x-auth-appid", "2229"},    {"x-auth-openid", ""},
+        {"x-auth-platform", ""},     {"x-auth-timestamp", std::to_string(timestamp)},
+    };
+    auto ret = curl.setUrl("https://gptalk.net/api/chatgpt/user/login")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([&](std::string) {})
+                   .setRecvBodyCallback([&](std::string str) {
+                       recv.append(str);
+                       return;
+                   })
+                   .setBody([&] {
+                       nlohmann::json login_json;
+                       login_json["fingerprint"] = generate_token_hex(16);
+                       login_json["platform"] = "fingerprint";
+                       std::string request_str = login_json.dump();
+                       return request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("gptalk.net/api/chatgpt/user/login: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-        ch->try_send(err, error_info);
+        ch->try_send(err, ret.value());
         co_return;
     }
-    SPDLOG_INFO("login rsp: [{}]", input.recv);
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("liaobots http code:{}", response_code));
-        co_return;
-    }
-    nlohmann::json auth_rsp = nlohmann::json::parse(input.recv, nullptr, false);
+    SPDLOG_INFO("login rsp: [{}]", recv);
+    nlohmann::json auth_rsp = nlohmann::json::parse(recv, nullptr, false);
     auto auth_token = auth_rsp["data"]["token"].get<std::string>();
     SPDLOG_INFO("token: [{}]", auth_token);
 
-    curl_easy_setopt(curl, CURLOPT_URL, "https://gptalk.net/api/chatgpt/chatapi/text");
+    auto auth_str = std::format("Bearer {}", auth_token);
+    headers.emplace("authorization", auth_str);
 
-    if (!m_cfg.http_proxy.empty())
-        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-    input.recv.clear();
-    auto api_action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) -> size_t {
-        auto input_ptr = static_cast<Input*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        auto& [ch, recv, _] = *input_ptr;
-        recv.append(data);
-        return size * nmemb;
-    };
-    size_t (*api_cb)(void* contents, size_t size, size_t nmemb, void* userp) = api_action_cb;
-    curlEasySetopt(curl);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, api_cb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-    constexpr std::string_view json_str = R"({
-        "content":"hello",
-        "accept":"stream",
-        "from":1,
-        "model":"gpt-3.5-turbo",
-        "is_mobile":0,
-        "user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-        "is_open_ctx":0,
-        "prompt":"",
-        "roid":111,
-        "temperature":0,
-        "ctx_msg_count":3,
-        "created_at":1696655321
-    })";
-    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-    request["created_at"] = timestamp;
-    request["content"] = prompt;
-    request_str = request.dump();
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, request_str.c_str());
-
-    auto auth_str = std::format("authorization: Bearer {}", auth_token);
-    headers = curl_slist_append(headers, auth_str.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-
-    res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
+    recv.clear();
+    ret = curl.setUrl("https://gptalk.net/api/chatgpt/chatapi/text")
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([&](std::string) {})
+              .setRecvBodyCallback([&](std::string str) {
+                  recv.append(str);
+                  return;
+              })
+              .setBody([&] {
+                  constexpr std::string_view json_str = R"({
+                    "content":"hello",
+                    "accept":"stream",
+                    "from":1,
+                    "model":"gpt-3.5-turbo",
+                    "is_mobile":0,
+                    "user_agent":"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+                    "is_open_ctx":0,
+                    "prompt":"",
+                    "roid":111,
+                    "temperature":0,
+                    "ctx_msg_count":3,
+                    "created_at":1696655321
+                })";
+                  nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+                  request["created_at"] = timestamp;
+                  request["content"] = prompt;
+                  auto request_str = request.dump();
+                  return request_str;
+              }())
+              .clearHeaders()
+              .setHttpHeaders(headers)
+              .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("gptalk.net/api/chatgpt/chatapi/text: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-        ch->try_send(err, error_info);
+        ch->try_send(err, ret.value());
         co_return;
     }
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("liaobots http code:{}", response_code));
-        co_return;
-    }
-    SPDLOG_INFO("input.recv: [{}]", input.recv);
-    nlohmann::json get_text_rsp = nlohmann::json::parse(input.recv, nullptr, false);
+    SPDLOG_INFO("input.recv: [{}]", recv);
+    nlohmann::json get_text_rsp = nlohmann::json::parse(recv, nullptr, false);
     auto token = get_text_rsp["data"]["token"].get<std::string>();
     SPDLOG_INFO("token: [{}]", token);
-    input.recv.clear();
+    recv.clear();
 
+    std::string last_message;
     auto url = std::format("https://gptalk.net/api/chatgpt/chatapi/stream?token={}", token);
-
-    SPDLOG_INFO("url: {}", url);
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
-
-    if (!m_cfg.http_proxy.empty())
-        curl_easy_setopt(curl, CURLOPT_PROXY, m_cfg.http_proxy.c_str());
-    curlEasySetopt(curl);
-
-    auto stream_action_cb = [](void* contents, size_t size, size_t nmemb, void* userp) mutable -> size_t {
-        auto input_ptr = static_cast<Input*>(userp);
-        std::string data{(char*)contents, size * nmemb};
-        auto& [ch, recv, last_message] = *input_ptr;
-        recv.append(data);
-        while (true) {
-            auto position = recv.find("\n");
-            if (position == std::string::npos)
-                break;
-            auto msg = recv.substr(0, position + 1);
-            recv.erase(0, position + 1);
-            msg.pop_back();
-            if (msg.empty() || !msg.contains("content") || !msg.starts_with("data: "))
-                continue;
-            msg.erase(0, 6);
-            boost::system::error_code err{};
-            nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
-            if (line_json.is_discarded()) {
-                SPDLOG_ERROR("json parse error: [{}]", msg);
-                boost::asio::post(ch->get_executor(),
-                                  [=] { ch->try_send(err, std::format("json parse error: [{}]", msg)); });
-                continue;
-            }
-            auto content = line_json["content"].get<std::string>();
-            if (last_message.empty())
-                last_message = content;
-            else {
-                auto count = last_message.size();
-                last_message = content;
-                content.erase(0, count);
-            }
-            if (content.empty())
-                continue;
-            boost::asio::post(ch->get_executor(), [=, content = std::move(content)] { ch->try_send(err, content); });
-        }
-        return size * nmemb;
-    };
-    size_t (*stream_action_cb_fn)(void* contents, size_t size, size_t nmemb, void* userp) = stream_action_cb;
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, stream_action_cb_fn);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &input);
-    struct curl_slist* new_headers = nullptr;
-    new_headers = curl_slist_append(new_headers, "Content-Type: application/json");
-    new_headers = curl_slist_append(new_headers, "authority: gptalk.net");
-    new_headers = curl_slist_append(new_headers, "origin: https://gptalk.net");
-    new_headers = curl_slist_append(new_headers, "Accept: */*");
-    new_headers = curl_slist_append(new_headers, "x-auth-appid: 2229");
-    new_headers = curl_slist_append(new_headers, "x-auth-openid: ");
-    new_headers = curl_slist_append(new_headers, "x-auth-platform: ");
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, new_headers);
-    ScopeExit new_headers_auto_exit{[=] { curl_slist_free_all(new_headers); }};
-
-    res = curl_easy_perform(curl);
-    if (res != CURLE_OK) {
+    ret = curl.setUrl(url)
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([&](std::string) {})
+              .setOpt(CURLOPT_HTTPGET, 1L)
+              .setRecvBodyCallback([&](std::string str) {
+                  recv.append(str);
+                  while (true) {
+                      auto position = recv.find("\n");
+                      if (position == std::string::npos)
+                          break;
+                      auto msg = recv.substr(0, position + 1);
+                      recv.erase(0, position + 1);
+                      msg.pop_back();
+                      if (msg.empty() || !msg.contains("content") || !msg.starts_with("data: "))
+                          continue;
+                      msg.erase(0, 6);
+                      boost::system::error_code err{};
+                      nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
+                      if (line_json.is_discarded()) {
+                          SPDLOG_ERROR("json parse error: [{}]", msg);
+                          boost::asio::post(ch->get_executor(),
+                                            [=] { ch->try_send(err, std::format("json parse error: [{}]", msg)); });
+                          continue;
+                      }
+                      auto content = line_json["content"].get<std::string>();
+                      if (last_message.empty())
+                          last_message = content;
+                      else {
+                          auto count = last_message.size();
+                          last_message = content;
+                          content.erase(0, count);
+                      }
+                      if (content.empty())
+                          continue;
+                      boost::asio::post(ch->get_executor(),
+                                        [=, content = std::move(content)] { ch->try_send(err, content); });
+                  }
+              })
+              .clearHeaders()
+              .setHttpHeaders([] -> auto& {
+                  static std::unordered_multimap<std::string, std::string> headers{
+                      {"Accept", "*/*"},           {"Content-Type", "application/json"},
+                      {"authority", "gptalk.net"}, {"origin", "https://gptalk.net"},
+                      {"x-auth-appid", "2229"},    {"x-auth-openid", ""},
+                      {"x-auth-platform", ""},
+                  };
+                  return headers;
+              }())
+              .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("gptalk.net/api/chatgpt/chatapi/stream: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
-        ch->try_send(err, error_info);
-        co_return;
-    }
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
-    if (response_code != 200) {
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("gptalk http code:{}", response_code));
-        co_return;
+        ch->try_send(err, ret.value());
     }
     co_return;
 }
 
 boost::asio::awaitable<void> FreeGpt::gptForLove(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
-    boost::system::error_code err{};
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
     auto secret_rsp = callZeus(std::format("{}/gptforlove", m_cfg.zeus), "{}");
     if (!secret_rsp.has_value()) {
         SPDLOG_ERROR("callZeus error: {}", secret_rsp.error());
@@ -1745,8 +1590,8 @@ boost::asio::awaitable<void> FreeGpt::gptForLove(std::shared_ptr<Channel> ch, nl
 boost::asio::awaitable<void> FreeGpt::chatGptDemo(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
-    boost::system::error_code err{};
 
+    boost::system::error_code err{};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     std::unordered_multimap<std::string, std::string> http_headers{
@@ -1870,8 +1715,8 @@ boost::asio::awaitable<void> FreeGpt::chatGptDemo(std::shared_ptr<Channel> ch, n
 boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
-    boost::system::error_code err{};
 
+    boost::system::error_code err{};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     static std::unordered_multimap<std::string, std::string> headers{
@@ -2506,8 +2351,8 @@ boost::asio::awaitable<void> FreeGpt::fakeGpt(std::shared_ptr<Channel> ch, nlohm
 boost::asio::awaitable<void> FreeGpt::vercel(std::shared_ptr<Channel> ch, nlohmann::json json) {
     co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
     ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
-    boost::system::error_code err{};
 
+    boost::system::error_code err{};
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     auto create_random_number = [] {
