@@ -1,13 +1,13 @@
 #include <chrono>
 #include <format>
 #include <iostream>
-#include <queue>
 #include <random>
 #include <ranges>
 #include <regex>
 #include <tuple>
 #include <vector>
 
+#include <concurrentqueue/concurrentqueue.h>
 #include <curl/curl.h>
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
@@ -889,21 +889,16 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
 
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
-    static std::mutex mtx;
-    static std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> cookie_queue;
-    std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string> cookie_cache;
-    std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> tmp_queue;
-    std::unique_lock lk(mtx);
-    while (!cookie_queue.empty()) {
-        auto& [time_point, code] = cookie_queue.front();
-        if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(15))
-            tmp_queue.push(std::move(cookie_queue.front()));
-        cookie_queue.pop();
+    using Tuple = std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>;
+    static moodycamel::ConcurrentQueue<Tuple> cookie_queue;
+    Tuple item;
+    bool found{false};
+    if (cookie_queue.try_dequeue(item)) {
+        auto& [time_point, cookie] = item;
+        if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
+            found = true;
     }
-    cookie_queue = std::move(tmp_queue);
-    SPDLOG_INFO("cookie_queue size: {}", cookie_queue.size());
-    if (cookie_queue.empty()) {
-        lk.unlock();
+    if (!found) {
         std::string header_str;
         auto ret = Curl()
                        .setUrl("https://you.com")
@@ -939,19 +934,15 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
             ch->try_send(err, "cookie is empty");
             co_return;
         }
-        cookie_cache = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie));
-    } else {
-        cookie_cache = std::move(cookie_queue.front());
-        cookie_queue.pop();
-        lk.unlock();
+        item = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie));
     }
-    SPDLOG_INFO("cookie: {}", std::get<1>(cookie_cache));
-    ScopeExit auto_free([&] {
-        std::lock_guard lk(mtx);
-        cookie_queue.push(std::move(cookie_cache));
+    SPDLOG_INFO("cookie: {}", std::get<1>(item));
+    ScopeExit auto_free([&] mutable {
+        auto& [time_point, cookie] = item;
+        if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
+            cookie_queue.enqueue(std::move(item));
     });
-    auto cookie_str =
-        std::format("uuid_guest={}; safesearch_guest=Off; {}", createUuidString(), std::get<1>(cookie_cache));
+    auto cookie_str = std::format("uuid_guest={}; safesearch_guest=Off; {}", createUuidString(), std::get<1>(item));
 
     std::multimap<std::string, std::string> params{
         {"q", prompt},
@@ -965,11 +956,10 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
         {"queryTraceId", createUuidString()},
     };
     auto request_url = std::format("https://you.com/api/streamingSearch?{}", paramsToQueryStr(params));
-
     auto ret = Curl()
                    .setUrl(request_url)
                    .setProxy(m_cfg.http_proxy)
-                   .setOpt(CURLOPT_COOKIE, std::get<1>(cookie_cache).c_str())
+                   .setOpt(CURLOPT_COOKIE, std::get<1>(item).c_str())
                    .setRecvHeadersCallback([&](std::string) { return; })
                    .setRecvBodyCallback([&](std::string data) {
                        boost::system::error_code err{};
@@ -992,10 +982,11 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
                        return;
                    })
                    .clearHeaders()
-                   .setHttpHeaders([] -> auto& {
-                       static std::unordered_multimap<std::string, std::string> headers{
+                   .setHttpHeaders([&] -> auto {
+                       std::unordered_multimap<std::string, std::string> headers{
                            {"referer", "https://you.com/search?q=gpt4&tbm=youchat"},
                            {"Accept", "text/event-stream"},
+                           {"cookie", cookie_str},
                        };
                        return headers;
                    }())
@@ -2470,21 +2461,16 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     boost::system::error_code err{};
     ScopeExit auto_exit{[&] { ch->close(); }};
 
-    static std::mutex mtx;
-    static std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> cookie_queue;
-    std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string> cookie_cache;
-    std::queue<std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>> tmp_queue;
-    std::unique_lock lk(mtx);
-    while (!cookie_queue.empty()) {
-        auto& [time_point, code] = cookie_queue.front();
+    using Tuple = std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>;
+    static moodycamel::ConcurrentQueue<Tuple> cookie_queue;
+    Tuple item;
+    bool found{false};
+    if (cookie_queue.try_dequeue(item)) {
+        auto& [time_point, cookie] = item;
         if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
-            tmp_queue.push(std::move(cookie_queue.front()));
-        cookie_queue.pop();
+            found = true;
     }
-    cookie_queue = std::move(tmp_queue);
-    SPDLOG_INFO("cookie_queue size: {}", cookie_queue.size());
-    if (cookie_queue.empty()) {
-        lk.unlock();
+    if (!found) {
         std::string recv;
         auto get_cookiet_ret = Curl()
                                    .setUrl(m_cfg.flaresolverr)
@@ -2510,7 +2496,7 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
                                    }())
                                    .perform();
         if (get_cookiet_ret.has_value()) {
-            SPDLOG_ERROR("http://127.0.0.1:8191/v1: [{}]", get_cookiet_ret.value());
+            SPDLOG_ERROR("call {}: [{}]", m_cfg.flaresolverr, get_cookiet_ret.value());
             co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
             ch->try_send(err, get_cookiet_ret.value());
             co_return;
@@ -2538,17 +2524,13 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
         }
         auto cookie_str = std::format("cf_clearance={}", (*it)["value"].get<std::string>());
         // std::cout << rsp["solution"]["userAgent"].get<std::string>() << std::endl;
-        cookie_cache = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie_str));
-    } else {
-        cookie_cache = std::move(cookie_queue.front());
-        cookie_queue.pop();
-        lk.unlock();
+        item = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie_str));
     }
-    SPDLOG_INFO("cookie: {}", std::get<1>(cookie_cache));
-
-    ScopeExit auto_free([&] {
-        std::lock_guard lk(mtx);
-        cookie_queue.push(std::move(cookie_cache));
+    SPDLOG_INFO("cookie: {}", std::get<1>(item));
+    ScopeExit auto_free([&] mutable {
+        auto& [time_point, cookie] = item;
+        if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
+            cookie_queue.enqueue(std::move(item));
     });
 
     constexpr std::string_view host = "chat.aivvm.com";
@@ -2580,7 +2562,7 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     req.set("sec-fetch-mode", "cors");
     req.set("sec-fetch-site", "same-origin");
     req.set("DNT", "1");
-    req.set("Cookie", std::get<1>(cookie_cache));
+    req.set("Cookie", std::get<1>(item));
 
     constexpr std::string_view json_str = R"({
         "model":{
