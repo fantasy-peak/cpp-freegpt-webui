@@ -2527,7 +2527,10 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
         item = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie_str));
     }
     SPDLOG_INFO("cookie: {}", std::get<1>(item));
+    bool return_flag{true};
     ScopeExit auto_free([&] mutable {
+        if (!return_flag)
+            return;
         auto& [time_point, cookie] = item;
         if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
             cookie_queue.enqueue(std::move(item));
@@ -2594,5 +2597,7 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
         if (!str.empty())
             ch->try_send(err, str);
     });
+    if (result == Status::UnexpectedHttpCode)
+        return_flag = false;
     co_return;
 }
