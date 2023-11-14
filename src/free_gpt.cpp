@@ -2621,10 +2621,7 @@ boost::asio::awaitable<void> FreeGpt::berlin(std::shared_ptr<Channel> ch, nlohma
     auto ret = Curl()
                    .setUrl("https://ai.berlin4h.top/api/login")
                    .setProxy(m_cfg.http_proxy)
-                   .setRecvHeadersCallback([](std::string str) {
-                       std::cout << str << std::endl;
-                       return;
-                   })
+                   .setRecvHeadersCallback([](std::string) {})
                    .setRecvBodyCallback([&](std::string str) mutable { recv.append(str); })
                    .setBody([&] {
                        constexpr std::string_view ask_json_str = R"({
@@ -2707,6 +2704,93 @@ boost::asio::awaitable<void> FreeGpt::berlin(std::shared_ptr<Channel> ch, nlohma
               .perform();
     if (ret.has_value()) {
         SPDLOG_ERROR("https://ai.berlin4h.top/api/chat/completions: [{}]", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"content-type", "application/x-www-form-urlencoded"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://chatgpt4online.org")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) {})
+                   .setRecvBodyCallback([&](std::string str) mutable { recv.append(str); })
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://chatgpt4online.org: [{}]", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    static std::string pattern{R"(data-nonce=".*")"};
+
+    std::vector<std::string> matches = findAll(pattern, recv);
+    if (matches.size() != 1) {
+        SPDLOG_ERROR("parsing login failed");
+        co_await ch->async_send(err, recv, use_nothrow_awaitable);
+        co_return;
+    }
+
+    std::regex reg("\"([^\"]*)\"");
+    std::sregex_iterator iter(matches[0].begin(), matches[0].end(), reg);
+    std::sregex_iterator end;
+    std::vector<std::string> results;
+    while (iter != end) {
+        results.emplace_back(iter->str(1));
+        iter++;
+    }
+    if (results.empty()) {
+        SPDLOG_ERROR("Failed to extract content");
+        co_await ch->async_send(err, "Failed to extract content", use_nothrow_awaitable);
+        co_return;
+    }
+    auto& nonce = results[0];
+    SPDLOG_INFO("data_nonce: {}", nonce);
+    ret = Curl()
+              .setUrl("https://chatgpt4online.org/rizq")
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([](std::string) { return; })
+              .setRecvBodyCallback([&](std::string str) mutable {
+                  boost::system::error_code err{};
+                  nlohmann::json line_json = nlohmann::json::parse(str, nullptr, false);
+                  if (line_json.is_discarded()) {
+                      SPDLOG_ERROR("json parse error: [{}]", str);
+                      boost::asio::post(ch->get_executor(),
+                                        [=] { ch->try_send(err, std::format("json parse error: [{}]", str)); });
+                      return;
+                  }
+                  auto message = line_json["data"].get<std::string>();
+                  if (message.empty())
+                      return;
+                  boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, message); });
+              })
+              .setBody([&] {
+                  std::multimap<std::string, std::string> params{
+                      {"_wpnonce", nonce},
+                      {"post_id", "58"},
+                      {"url", "https://chatgpt4online.org"},
+                      {"action", "wpaicg_chat_shortcode_message"},
+                      {"message", prompt},
+                      {"bot_id", "3405"},
+                  };
+                  return paramsToQueryStr(params);
+              }())
+              .clearHeaders()
+              .setHttpHeaders(headers)
+              .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://chatgpt4online.org/rizq: [{}]", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
