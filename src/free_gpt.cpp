@@ -1041,7 +1041,7 @@ boost::asio::awaitable<void> FreeGpt::binjie(std::shared_ptr<Channel> ch, nlohma
         co_return;
     }
 
-    auto ret = co_await sendRequestRecvChunk(ch, client.value(), req, 200, [&ch](std::string str) {
+    co_await sendRequestRecvChunk(ch, client.value(), req, 200, [&ch](std::string str) {
         boost::system::error_code err{};
         ch->try_send(err, std::move(str));
     });
@@ -2599,5 +2599,116 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     });
     if (result == Status::UnexpectedHttpCode)
         return_flag = false;
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::berlin(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"content-type", "application/json"},
+        {"referer", "https://ai.berlin4h.top/"},
+        {"origin", "https://ai.berlin4h.top"},
+        {"Alt-Used", R"(ai.berlin4h.top)"},
+        {"Pragma", R"(no-cache)"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://ai.berlin4h.top/api/login")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string str) {
+                       std::cout << str << std::endl;
+                       return;
+                   })
+                   .setRecvBodyCallback([&](std::string str) mutable { recv.append(str); })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "account":"免费使用GPT3.5模型@163.com",
+                            "password":"659e945c2d004686bad1a75b708c962f"
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       SPDLOG_INFO("request: [{}]", ask_request.dump());
+                       return ask_request.dump();
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://ai.berlin4h.top/api/login: [{}]", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    SPDLOG_INFO("recv: {}", recv);
+    nlohmann::json login_rsp_json = nlohmann::json::parse(recv, nullptr, false);
+    if (login_rsp_json.is_discarded()) {
+        SPDLOG_ERROR("json parse error: [{}]", recv);
+        boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, std::format("json parse error: [{}]", recv)); });
+        co_return;
+    }
+    headers.emplace("token", login_rsp_json["data"]["token"].get<std::string>());
+    recv.clear();
+    ret = Curl()
+              .setUrl("https://ai.berlin4h.top/api/chat/completions")
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([](std::string) { return; })
+              .setRecvBodyCallback([&](std::string str) mutable {
+                  recv.append(str);
+                  while (true) {
+                      auto position = recv.find("\n");
+                      if (position == std::string::npos)
+                          break;
+                      auto msg = recv.substr(0, position + 1);
+                      recv.erase(0, position + 1);
+                      msg.pop_back();
+                      if (msg.empty())
+                          continue;
+                      boost::system::error_code err{};
+                      nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
+                      if (line_json.is_discarded()) {
+                          SPDLOG_ERROR("json parse error: [{}]", msg);
+                          boost::asio::post(ch->get_executor(),
+                                            [=] { ch->try_send(err, std::format("json parse error: [{}]", msg)); });
+                          continue;
+                      }
+                      auto message = line_json["content"].get<std::string>();
+                      if (message.empty())
+                          continue;
+                      boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, message); });
+                  }
+                  return;
+              })
+              .setBody([&] {
+                  constexpr std::string_view ask_json_str = R"({
+                        "prompt":"hello",
+                        "parentMessageId":"936a47d9-2d29-4569-9906-38e9686048da",
+                        "options":{
+                            "model":"gpt-3.5-turbo",
+                            "temperature":0,
+                            "presence_penalty":0,
+                            "frequency_penalty":0,
+                            "max_tokens":1888,
+                            "stream":false
+                        }
+                    })";
+                  nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                  ask_request["prompt"] = prompt;
+                  ask_request["parentMessageId"] = createUuidString();
+                  std::string ask_request_str = ask_request.dump();
+                  SPDLOG_INFO("request: [{}]", ask_request_str);
+                  return ask_request_str;
+              }())
+              .clearHeaders()
+              .setHttpHeaders(headers)
+              .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("https://ai.berlin4h.top/api/chat/completions: [{}]", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
     co_return;
 }
