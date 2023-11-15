@@ -331,13 +331,13 @@ public:
     std::optional<std::string> perform() {
         auto res = curl_easy_perform(m_curl);
         if (res != CURLE_OK) {
-            auto error_info = std::format("curl_easy_perform() failed:{}", curl_easy_strerror(res));
+            auto error_info = std::format("[{}] -> [{}]", m_url, curl_easy_strerror(res));
             return error_info;
         }
         int32_t response_code;
         curl_easy_getinfo(m_curl, CURLINFO_RESPONSE_CODE, &response_code);
         if (m_http_status_code != response_code)
-            return std::format("http status code is {}", response_code);
+            return std::format("[{}] -> [Http Status Code:{}]", m_url, response_code);
         return std::nullopt;
     }
     auto& clearHeaders() {
@@ -393,12 +393,12 @@ std::expected<nlohmann::json, std::string> callZeus(const std::string& host, con
                    .setHttpHeaders(headers)
                    .perform();
     if (ret) {
-        SPDLOG_ERROR("call zeus error: {}", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         return std::unexpected(ret.value());
     }
     nlohmann::json rsp = nlohmann::json::parse(recv, nullptr, false);
     if (rsp.is_discarded()) {
-        SPDLOG_ERROR("json parse error");
+        SPDLOG_ERROR("json parse error: {}", recv);
         return std::unexpected("parse callZeus error");
     }
     return rsp;
@@ -582,7 +582,7 @@ boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohma
                    .setHttpHeaders(headers)
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("api.deepai.org: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -907,7 +907,7 @@ boost::asio::awaitable<void> FreeGpt::you(std::shared_ptr<Channel> ch, nlohmann:
                        .setRecvBodyCallback([&](std::string) { return; })
                        .perform();
         if (ret.has_value()) {
-            SPDLOG_ERROR("get You cookie error: [{}]", ret.value());
+            SPDLOG_ERROR("{}", ret.value());
             co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
             ch->try_send(err, ret.value());
             co_return;
@@ -1098,7 +1098,7 @@ boost::asio::awaitable<void> FreeGpt::chatBase(std::shared_ptr<Channel> ch, nloh
             }())
             .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://www.chatbase.co/api/fe/chat: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -1130,7 +1130,7 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
                    })
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("action_get_token: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -1186,7 +1186,7 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
               })
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("action_ai_gpt: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -1327,7 +1327,7 @@ boost::asio::awaitable<void> FreeGpt::freeGpt(std::shared_ptr<Channel> ch, nlohm
                    }())
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://r.aifree.site/api/generate: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -1381,7 +1381,7 @@ boost::asio::awaitable<void> FreeGpt::gptalk(std::shared_ptr<Channel> ch, nlohma
                    .setHttpHeaders(headers)
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("gptalk.net/api/chatgpt/user/login: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -1427,7 +1427,7 @@ boost::asio::awaitable<void> FreeGpt::gptalk(std::shared_ptr<Channel> ch, nlohma
               .setHttpHeaders(headers)
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("gptalk.net/api/chatgpt/chatapi/text: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -1490,7 +1490,7 @@ boost::asio::awaitable<void> FreeGpt::gptalk(std::shared_ptr<Channel> ch, nlohma
               }())
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("gptalk.net/api/chatgpt/chatapi/stream: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -1571,7 +1571,7 @@ boost::asio::awaitable<void> FreeGpt::gptForLove(std::shared_ptr<Channel> ch, nl
                    .setHttpHeaders(headers)
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("call api.gptplus.one error: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -1746,7 +1746,7 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
                    .perform();
 
     if (ret) {
-        SPDLOG_ERROR("https://www.llama2.ai/api: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -1921,7 +1921,7 @@ boost::asio::awaitable<void> FreeGpt::geekGpt(std::shared_ptr<Channel> ch, nlohm
                    .setHttpHeaders(headers)
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://ai.fakeopen.com/v1/chat/completions: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -2191,7 +2191,7 @@ boost::asio::awaitable<void> FreeGpt::fakeGpt(std::shared_ptr<Channel> ch, nlohm
               .setHttpHeaders([&] -> auto& { return headers; }())
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("auth login error: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -2234,7 +2234,7 @@ boost::asio::awaitable<void> FreeGpt::fakeGpt(std::shared_ptr<Channel> ch, nlohm
               .setHttpHeaders([&] -> auto& { return headers; }())
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("/api/auth/session: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -2332,7 +2332,7 @@ boost::asio::awaitable<void> FreeGpt::fakeGpt(std::shared_ptr<Channel> ch, nlohm
               .setHttpHeaders(headers)
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("/api/conversation: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -2383,7 +2383,7 @@ boost::asio::awaitable<void> FreeGpt::vercel(std::shared_ptr<Channel> ch, nlohma
                    .setHttpHeaders(headers)
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://sdk.vercel.ai/openai.jpeg: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
         co_return;
@@ -2446,7 +2446,7 @@ boost::asio::awaitable<void> FreeGpt::vercel(std::shared_ptr<Channel> ch, nlohma
                 .setHttpHeaders(headers)
                 .perform();
         if (ret.has_value()) {
-            SPDLOG_WARN("https://sdk.vercel.ai/api/generate: [{}]", ret.value());
+            SPDLOG_ERROR("{}", ret.value());
             co_await timeout(std::chrono::seconds(2));
             continue;
         }
@@ -2636,7 +2636,7 @@ boost::asio::awaitable<void> FreeGpt::berlin(std::shared_ptr<Channel> ch, nlohma
                    .setHttpHeaders(headers)
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://ai.berlin4h.top/api/login: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -2703,7 +2703,7 @@ boost::asio::awaitable<void> FreeGpt::berlin(std::shared_ptr<Channel> ch, nlohma
               .setHttpHeaders(headers)
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://ai.berlin4h.top/api/chat/completions: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -2729,7 +2729,7 @@ boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch
                    .setRecvBodyCallback([&](std::string str) mutable { recv.append(str); })
                    .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://chatgpt4online.org: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
@@ -2790,7 +2790,7 @@ boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch
               .setHttpHeaders(headers)
               .perform();
     if (ret.has_value()) {
-        SPDLOG_ERROR("https://chatgpt4online.org/rizq: [{}]", ret.value());
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
         ch->try_send(err, ret.value());
     }
