@@ -7,7 +7,8 @@
 struct Config {
     std::string client_root_path;
     std::size_t interval{300};
-    std::size_t work_thread_num{std::thread::hardware_concurrency() * 2};
+    std::size_t work_thread_num{std::thread::hardware_concurrency() == 1 ? 2
+                                                                         : std::thread::hardware_concurrency() * 2};
     std::string host{"0.0.0.0"};
     std::string port{"8858"};
     std::string chat_path{"/chat"};
