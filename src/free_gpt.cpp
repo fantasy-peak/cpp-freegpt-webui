@@ -2721,9 +2721,9 @@ boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch
         {"Accept", "*/*"},
         {"content-type", "application/x-www-form-urlencoded"},
     };
+    Curl curl;
     std::string recv;
-    auto ret = Curl()
-                   .setUrl("https://chatgpt4online.org")
+    auto ret = curl.setUrl("https://chatgpt4online.org")
                    .setProxy(m_cfg.http_proxy)
                    .setRecvHeadersCallback([](std::string) {})
                    .setRecvBodyCallback([&](std::string str) mutable { recv.append(str); })
@@ -2757,8 +2757,7 @@ boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch
     }
     auto& nonce = results[0];
     SPDLOG_INFO("data_nonce: {}", nonce);
-    ret = Curl()
-              .setUrl("https://chatgpt4online.org/rizq")
+    ret = curl.setUrl("https://chatgpt4online.org/rizq")
               .setProxy(m_cfg.http_proxy)
               .setRecvHeadersCallback([](std::string) { return; })
               .setRecvBodyCallback([&](std::string str) mutable {
@@ -2789,6 +2788,62 @@ boost::asio::awaitable<void> FreeGpt::chatGpt4Online(std::shared_ptr<Channel> ch
               .clearHeaders()
               .setHttpHeaders(headers)
               .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::chatAnywhere(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "application/json, text/plain, */*"},
+        {"content-type", "application/json"},
+        {"Referer", "https://chatanywhere.cn/"},
+        {"Origin", "https://chatanywhere.cn"},
+        {"Authorization", ""},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://chatanywhere.cn/v1/chat/gpt/")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       boost::system::error_code err{};
+                       boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "list":[
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "id":"s1_qYuOLXjI3rEpc7WHfQ",
+                            "title":"hello",
+                            "prompt":"",
+                            "temperature":0.5,
+                            "models":"61490748",
+                            "continuous":true
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["title"] = prompt;
+                       ask_request["list"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
     if (ret.has_value()) {
         SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
