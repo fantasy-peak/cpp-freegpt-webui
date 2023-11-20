@@ -24,21 +24,17 @@ public:
     boost::asio::awaitable<void> huggingChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> you(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> binjie(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> chatBase(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptGo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatForAi(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> freeGpt(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptalk(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptForLove(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptDemo(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> llama2(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> noowai(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> geekGpt(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGptAi(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> fakeGpt(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> vercel(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aivvm(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> berlin(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatGpt4Online(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> chatAnywhere(std::shared_ptr<Channel>, nlohmann::json);
 
