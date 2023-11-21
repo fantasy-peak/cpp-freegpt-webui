@@ -2587,3 +2587,55 @@ boost::asio::awaitable<void> FreeGpt::chatGptNext(std::shared_ptr<Channel> ch, n
     ch->try_send(err, info);
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::gptTalkru(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "application/json, text/plain, */*"},
+        {"content-type", "application/json"},
+        {"Referer", "https://gpttalk.ru/"},
+        {"Origin", "https://gpttalk.ru"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://gpttalk.ru/gpt2")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       boost::system::error_code err{};
+                       boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "model":"gpt-3.5-turbo",
+                            "modelType":1,
+                            "prompt":[
+                                {
+                                    "role":"user",
+                                    "content":"我的上一个问题"
+                                }
+                            ],
+                            "responseType":"stream"
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["prompt"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+
