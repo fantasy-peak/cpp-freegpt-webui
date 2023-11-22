@@ -284,10 +284,10 @@ public:
         curl_easy_setopt(m_curl, CURLOPT_URL, m_url.data());
         return *this;
     }
-    auto& setBody(std::string body) {
+    auto& setBody(std::string body, CURLoption cur_loption = CURLoption::CURLOPT_POSTFIELDS) {
         if (!body.empty()) {
             m_body = std::move(body);
-            curl_easy_setopt(m_curl, CURLOPT_POSTFIELDS, m_body.c_str());
+            curl_easy_setopt(m_curl, cur_loption, m_body.c_str());
         }
         return *this;
     }
@@ -1929,6 +1929,11 @@ boost::asio::awaitable<void> FreeGpt::fakeGpt(std::shared_ptr<Channel> ch, nlohm
         if (j["count"].get<int32_t>() == 0)
             random_j.emplace_back(std::move(j));
     }
+    if (random_j.empty()) {
+        SPDLOG_ERROR("random_j is empty!!!");
+        ch->try_send(err, json_result.dump());
+        co_return;
+    }
     std::mt19937 g{std::random_device{}()};
     std::uniform_int_distribution<std::size_t> d{0, random_j.size()};
     auto token_id = random_j[d(g)];
@@ -2638,4 +2643,3 @@ boost::asio::awaitable<void> FreeGpt::gptTalkru(std::shared_ptr<Channel> ch, nlo
     }
     co_return;
 }
-
