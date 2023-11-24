@@ -404,6 +404,18 @@ std::expected<nlohmann::json, std::string> callZeus(const std::string& host, con
     return rsp;
 }
 
+std::string decodeBase64(const std::string& to_decode) {
+    auto predicted_len = 3 * to_decode.length() / 4;
+    auto output_buffer{std::make_unique<char[]>(predicted_len + 1)};
+    std::vector<unsigned char> vec_chars{to_decode.begin(), to_decode.end()};
+    auto output_len = EVP_DecodeBlock(reinterpret_cast<unsigned char*>(output_buffer.get()), vec_chars.data(),
+                                      static_cast<int>(vec_chars.size()));
+    if (predicted_len != static_cast<unsigned long>(output_len)) {
+        throw std::runtime_error("DecodeBase64 error");
+    }
+    return output_buffer.get();
+}
+
 }  // namespace
 
 FreeGpt::FreeGpt(Config& cfg)
@@ -1056,20 +1068,26 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
     auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
 
     std::multimap<std::string, std::string> params{
-        {"q", prompt},
-        {"hlgpt", "default"},
-        {"hl", "en"},
+        {"ask", prompt},
     };
-    auto get_token_url = std::format("https://gptgo.ai/action_get_token.php?{}", paramsToQueryStr(params));
-
     std::string recv;
     Curl curl;
-    auto ret = curl.setUrl(get_token_url)
+    auto ret = curl.setUrl("https://gptgo.ai/get_token.php")
                    .setProxy(m_cfg.http_proxy)
                    .setRecvBodyCallback([&](std::string str) {
                        recv.append(str);
                        return;
                    })
+                   .setBody(paramsToQueryStr(params))
+                   .setHttpHeaders([&] -> auto {
+                       std::unordered_multimap<std::string, std::string> headers{
+                           {"Content-Type", "application/x-www-form-urlencoded"},
+                           {"Accept", "*"},
+                           {"Origin", "https://gptgo.ai"},
+                           {"Referer", "https://gptgo.ai/"},
+                       };
+                       return headers;
+                   }())
                    .perform();
     if (ret.has_value()) {
         SPDLOG_ERROR("{}", ret.value());
@@ -1078,26 +1096,20 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
         co_return;
     }
     SPDLOG_INFO("recv: [{}]", recv);
-    nlohmann::json line_json = nlohmann::json::parse(recv, nullptr, false);
-    if (line_json.is_discarded()) {
-        SPDLOG_ERROR("json parse error: [{}]", recv);
+    if (recv.size() < 30) {
+        SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, std::format("json parse error:{}", recv));
+        ch->try_send(err, std::format("invalid token"));
         co_return;
     }
-    auto status = line_json["status"].get<bool>();
-    if (!status) {
-        SPDLOG_ERROR("status is false: [{}]", recv);
-        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, recv);
-        co_return;
-    }
-    auto token = line_json["token"].get<std::string>();
+    std::string token = recv.substr(10, recv.size() - 30);
     SPDLOG_INFO("token: [{}]", token);
-
+    token = decodeBase64(token);
+    SPDLOG_INFO("decode token: [{}]", token);
     recv.clear();
-    auto url = std::format("https://gptgo.ai/action_ai_gpt.php?token={}", token);
+    auto url = std::format("https://api.gptgo.ai/web.php?array_chat={}", token);
     ret = curl.setUrl(url)
+              .setOpt(CURLOPT_HTTPGET, 1L)
               .setProxy(m_cfg.http_proxy)
               .setRecvBodyCallback([&](std::string str) {
                   recv.append(str);
@@ -1126,6 +1138,14 @@ boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohman
                   }
                   return;
               })
+              .setHttpHeaders([&] -> auto {
+                  std::unordered_multimap<std::string, std::string> headers{
+                      {"Accept", "*"},
+                      {"Origin", "https://gptgo.ai"},
+                      {"Referer", "https://gptgo.ai/"},
+                  };
+                  return headers;
+              }())
               .perform();
     if (ret.has_value()) {
         SPDLOG_ERROR("{}", ret.value());
