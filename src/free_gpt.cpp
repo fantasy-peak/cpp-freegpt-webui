@@ -2605,3 +2605,80 @@ boost::asio::awaitable<void> FreeGpt::gptTalkru(std::shared_ptr<Channel> ch, nlo
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::deepInfra(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "text/event-stream"},
+        {"content-type", "application/json"},
+        {"Referer", "https://deepinfra.com/"},
+        {"Origin", "https://deepinfra.com"},
+        {"X-Deepinfra-Source", "web-embed"},
+        {"sec-ch-ua", R"("Google Chrome";v="119", "Chromium";v="119", "Not?A_Brand";v="24")"},
+        {"sec-ch-ua-platform", R"("macOS")"},
+        {"sec-ch-ua-mobile", "?0"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-site"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://api.deepinfra.com/v1/openai/chat/completions")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       recv.append(str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               continue;
+                           }
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty())
+                               ch->try_send(err, str);
+                       }
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "model":"meta-llama/Llama-2-70b-chat-hf",
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "stream":true
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
