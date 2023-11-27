@@ -1834,6 +1834,7 @@ create_client:
     request.set("Cookie", cookie);
     request.set(boost::beast::http::field::user_agent, user_agent);
     request.set("Content-Type", "application/json");
+    request.set("X-Wp-Nonce", j["restNonce"]);
 
     constexpr std::string_view json_str = R"({
         "botId":"chatbot-9vy3t5",
