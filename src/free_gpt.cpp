@@ -2209,12 +2209,12 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     boost::system::error_code err{};
     ScopeExit auto_exit{[&] { ch->close(); }};
 
-    using Tuple = std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string>;
+    using Tuple = std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string, std::string>;
     static moodycamel::ConcurrentQueue<Tuple> cookie_queue;
     Tuple item;
     bool found{false};
     if (cookie_queue.try_dequeue(item)) {
-        auto& [time_point, cookie] = item;
+        auto& [time_point, cookie, _] = item;
         if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
             found = true;
     }
@@ -2232,6 +2232,7 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
                                            {"cmd", "request.get"},
                                            {"url", "https://chat.aivvm.com/zh"},
                                            {"maxTimeout", 60000},
+                                           {"session_ttl_minutes", 60},
                                        };
                                        return data.dump();
                                    }())
@@ -2270,25 +2271,23 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
             co_await ch->async_send(err, "not found cookie", use_nothrow_awaitable);
             co_return;
         }
+        std::string user_agent = rsp["solution"].at("userAgent");
         auto cookie_str = std::format("cf_clearance={}", (*it)["value"].get<std::string>());
         // std::cout << rsp["solution"]["userAgent"].get<std::string>() << std::endl;
-        item = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie_str));
+        item = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie_str), user_agent);
     }
     SPDLOG_INFO("cookie: {}", std::get<1>(item));
     bool return_flag{true};
     ScopeExit auto_free([&] mutable {
         if (!return_flag)
             return;
-        auto& [time_point, cookie] = item;
+        auto& [time_point, cookie, _] = item;
         if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
             cookie_queue.enqueue(std::move(item));
     });
-
+    auto user_agent = std::get<2>(item);
     constexpr std::string_view host = "chat.aivvm.com";
     constexpr std::string_view port = "443";
-
-    constexpr std::string_view user_agent{
-        R"(Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36)"};
 
     boost::asio::ssl::context ctx1(boost::asio::ssl::context::tls);
     ctx1.set_verify_mode(boost::asio::ssl::verify_none);
