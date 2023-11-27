@@ -15,20 +15,6 @@ options.add_argument("--disable-gpu")
 options.add_argument("--disable-dev-shm-usage")
 
 
-def deepai_refresh():
-    while True:
-        driver = webdriver.Chrome(options=options)
-        try:
-            driver.get("https://deepai.org")
-            wait = WebDriverWait(driver, 15)
-            cookies = driver.get_cookies()
-            print(cookies, flush=True)
-        except Exception as e:
-            traceback.print_exc()
-        driver.quit()
-        time.sleep(600)
-
-
 # curl -X POST -d '{}' -H "Content-Type: application/json" http://127.0.0.1:8860/gptforlove
 @app.route("/gptforlove", methods=["POST"])
 def get_gptforlove_secret():
@@ -54,7 +40,7 @@ return o.toString()
 @app.route("/vercel", methods=["POST"])
 def get_anti_bot_token():
     request_body = json.loads(request.data)
-    raw_data = json.loads(base64.b64decode(request_body['data'], validate=True))
+    raw_data = json.loads(base64.b64decode(request_body["data"], validate=True))
 
     js_script = """const globalThis={marker:"mark"};String.prototype.fontcolor=function(){return `<font>${this}</font>`};
         return (%s)(%s)""" % (
@@ -71,8 +57,6 @@ def get_anti_bot_token():
 
 
 if __name__ == "__main__":
-    thread = threading.Thread(target=deepai_refresh)
-    thread.start()
     port = os.getenv("PORT", "8860")
     ip = os.getenv("IP", "0.0.0.0")
     print(f"start zeus at {ip}:{port}", flush=True)

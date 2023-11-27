@@ -1834,3 +1834,62 @@ boost::asio::awaitable<void> FreeGpt::chatBase(std::shared_ptr<Channel> ch, nloh
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::deepAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    std::string user_agent{
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36)"};
+
+    std::random_device rd;
+    std::mt19937 mt(rd());
+    std::uniform_int_distribution<uint64_t> dist(0, 100000000);
+    uint64_t part1{dist(mt)};
+    auto part2 = md5(user_agent + md5(user_agent + md5(std::format("{}{}x", user_agent, part1))));
+    auto api_key = std::format("tryit-{}-{}", part1, part2);
+
+    constexpr char CRLF[] = "\r\n";
+    static std::string MULTI_PART_BOUNDARY = "9bc627aea4f77e150e6057f78036e73f";
+
+    auto content_type_str = std::format("multipart/form-data; boundary={}", MULTI_PART_BOUNDARY);
+    SPDLOG_INFO("content_type_str: {}", content_type_str);
+    auto api_key_str = std::format("api-key: {}", api_key);
+
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Content-Type", content_type_str},
+        {"api-key", api_key},
+    };
+    auto ret = Curl()
+                   .setUrl("https://api.deepai.org/save_chat_session")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([&](std::string) {})
+                   .setRecvBodyCallback([&](std::string str) {
+                       boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                       return;
+                   })
+                   .setBody([&] {
+                       nlohmann::json request_json{{{"role", "user"}, {"content", std::move(prompt)}}};
+                       std::ostringstream payload;
+                       payload << "--" << MULTI_PART_BOUNDARY << CRLF
+                               << R"(Content-Disposition: form-data; name="chat_style")" << CRLF << CRLF << "chat"
+                               << CRLF << "--" << MULTI_PART_BOUNDARY << CRLF
+                               << R"(Content-Disposition: form-data; name="chatHistory")" << CRLF << CRLF
+                               << request_json.dump() << CRLF << "--" << MULTI_PART_BOUNDARY << "--" << CRLF;
+                       SPDLOG_INFO("{}", payload.str());
+                       auto str = payload.str();
+                       return str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
