@@ -2313,30 +2313,50 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
     req.set("sec-fetch-site", "same-origin");
     req.set("DNT", "1");
     req.set("Cookie", std::get<1>(item));
-
-    constexpr std::string_view json_str = R"({
-        "model":{
-            "id":"gpt-3.5-turbo",
-            "name":"GPT-3.5",
-            "maxLength":12000,
-            "tokenLimit":4096
-        },
-        "messages":[
-            {
-                "role":"user",
-                "content":"hello"
-            }
-        ],
-        "key":"",
-        "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
-        "temperature":0.7
-    })";
-    nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-
-    request["messages"] = getConversationJson(json);
-    SPDLOG_INFO("{}", request.dump(2));
-
-    req.body() = request.dump();
+    auto model = json.at("model").get<std::string>();
+    if (model == "gpt-3.5-turbo-stream-aivvm") {
+        constexpr std::string_view json_str = R"({
+            "model":{
+                "id":"gpt-3.5-turbo",
+                "name":"GPT-3.5",
+                "maxLength":12000,
+                "tokenLimit":4096
+            },
+            "messages":[
+                {
+                    "role":"user",
+                    "content":"hello"
+                }
+            ],
+            "key":"",
+            "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
+            "temperature":0.7
+        })";
+        nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+        request["messages"] = getConversationJson(json);
+        SPDLOG_INFO("{}", request.dump(2));
+        req.body() = request.dump();
+    } else {
+        constexpr std::string_view json_str = R"({
+            "model":{
+                "id":"gpt-4",
+                "name":"GPT-4"
+            },
+            "messages":[
+                {
+                    "role":"user",
+                    "content":"hello"
+                }
+            ],
+            "key":"",
+            "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
+            "temperature":0.7
+        })";
+        nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+        request["messages"] = getConversationJson(json);
+        SPDLOG_INFO("{}", request.dump(2));
+        req.body() = request.dump();
+    }
     req.prepare_payload();
 
     auto result = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string str) {
