@@ -2286,86 +2286,77 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
             cookie_queue.enqueue(std::move(item));
     });
     auto user_agent = std::get<2>(item);
-    constexpr std::string_view host = "chat.aivvm.com";
-    constexpr std::string_view port = "443";
 
-    boost::asio::ssl::context ctx1(boost::asio::ssl::context::tls);
-    ctx1.set_verify_mode(boost::asio::ssl::verify_none);
-
-    auto client = co_await createHttpClient(ctx1, host, port);
-    if (!client.has_value()) {
-        SPDLOG_ERROR("createHttpClient: {}", client.error());
-        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
-        co_return;
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"Content-Type", "application/json"},
+        {"Cookie", std::get<1>(item)},
+        {"Origin", "https://chat.aivvm.com"},
+        {"Referer", "https://chat.aivvm.com/zh"},
+        {"User-Agent", user_agent},
+    };
+    auto ret = Curl()
+                   .setUrl("https://chat.aivvm.com/api/chat")
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       boost::system::error_code err{};
+                       if (!str.empty())
+                           ch->try_send(err, str);
+                       return;
+                   })
+                   .setBody([&] {
+                       auto model = json.at("model").get<std::string>();
+                       if (model == "gpt-3.5-turbo-stream-aivvm") {
+                           constexpr std::string_view json_str = R"({
+                                "model":{
+                                    "id":"gpt-3.5-turbo",
+                                    "name":"GPT-3.5",
+                                    "maxLength":12000,
+                                    "tokenLimit":4096
+                                },
+                                "messages":[
+                                    {
+                                        "role":"user",
+                                        "content":"hello"
+                                    }
+                                ],
+                                "key":"",
+                                "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
+                                "temperature":0.7
+                            })";
+                           nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+                           request["messages"] = getConversationJson(json);
+                           SPDLOG_INFO("{}", request.dump(2));
+                           return request.dump();
+                       } else {
+                           constexpr std::string_view json_str = R"({
+                                "model":{
+                                    "id":"gpt-4",
+                                    "name":"GPT-4"
+                                },
+                                "messages":[
+                                    {
+                                        "role":"user",
+                                        "content":"hello"
+                                    }
+                                ],
+                                "key":"",
+                                "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
+                                "temperature":0.7
+                            })";
+                           nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+                           request["messages"] = getConversationJson(json);
+                           SPDLOG_INFO("{}", request.dump(2));
+                           return request.dump();
+                       }
+                   }())
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
     }
-    auto& stream_ = client.value();
-
-    boost::beast::http::request<boost::beast::http::string_body> req{boost::beast::http::verb::post, "/api/chat", 11};
-    req.set(boost::beast::http::field::host, host);
-    req.set(boost::beast::http::field::user_agent, user_agent);
-    req.set("Accept", "*/*");
-    req.set("accept-language", "zh-CN,zh;q=0.8,zh-TW;q=0.7,zh-HK;q=0.5,en-US;q=0.3,en;q=0.2");
-    req.set("origin", "https://chat.aivvm.com");
-    req.set("referer", "https://chat.aivvm.com/zh");
-    req.set(boost::beast::http::field::content_type, "application/json");
-    req.set("sec-fetch-dest", "empty");
-    req.set("sec-fetch-mode", "cors");
-    req.set("sec-fetch-site", "same-origin");
-    req.set("DNT", "1");
-    req.set("Cookie", std::get<1>(item));
-    auto model = json.at("model").get<std::string>();
-    if (model == "gpt-3.5-turbo-stream-aivvm") {
-        constexpr std::string_view json_str = R"({
-            "model":{
-                "id":"gpt-3.5-turbo",
-                "name":"GPT-3.5",
-                "maxLength":12000,
-                "tokenLimit":4096
-            },
-            "messages":[
-                {
-                    "role":"user",
-                    "content":"hello"
-                }
-            ],
-            "key":"",
-            "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
-            "temperature":0.7
-        })";
-        nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-        request["messages"] = getConversationJson(json);
-        SPDLOG_INFO("{}", request.dump(2));
-        req.body() = request.dump();
-    } else {
-        constexpr std::string_view json_str = R"({
-            "model":{
-                "id":"gpt-4",
-                "name":"GPT-4"
-            },
-            "messages":[
-                {
-                    "role":"user",
-                    "content":"hello"
-                }
-            ],
-            "key":"",
-            "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
-            "temperature":0.7
-        })";
-        nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-        request["messages"] = getConversationJson(json);
-        SPDLOG_INFO("{}", request.dump(2));
-        req.body() = request.dump();
-    }
-    req.prepare_payload();
-
-    auto result = co_await sendRequestRecvChunk(ch, stream_, req, 200, [&ch](std::string str) {
-        boost::system::error_code err{};
-        if (!str.empty())
-            ch->try_send(err, str);
-    });
-    if (result == Status::UnexpectedHttpCode)
-        return_flag = false;
     co_return;
 }
 
