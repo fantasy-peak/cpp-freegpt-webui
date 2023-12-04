@@ -2692,3 +2692,141 @@ boost::asio::awaitable<void> FreeGpt::deepInfra(std::shared_ptr<Channel> ch, nlo
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::gptChatly(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+    boost::system::error_code err{};
+    using Tuple = std::tuple<std::chrono::time_point<std::chrono::system_clock>, std::string, std::string>;
+    static moodycamel::ConcurrentQueue<Tuple> cookie_queue;
+    Tuple item;
+    bool found{false};
+    if (cookie_queue.try_dequeue(item)) {
+        auto& [time_point, cookie, _] = item;
+        if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
+            found = true;
+    }
+    if (!found) {
+        std::string recv;
+        auto get_cookiet_ret = Curl()
+                                   .setUrl(m_cfg.flaresolverr)
+                                   .setRecvHeadersCallback([](std::string) { return; })
+                                   .setRecvBodyCallback([&](std::string str) mutable {
+                                       recv.append(str);
+                                       return;
+                                   })
+                                   .setBody([] {
+                                       nlohmann::json data{
+                                           {"cmd", "request.get"},
+                                           {"url", "https://gptchatly.com"},
+                                           {"maxTimeout", 60000},
+                                           {"session_ttl_minutes", 60},
+                                       };
+                                       return data.dump();
+                                   }())
+                                   .setHttpHeaders([&] -> auto& {
+                                       static std::unordered_multimap<std::string, std::string> headers{
+                                           {"Accept", "*/*"},
+                                           {"Content-Type", "application/json"},
+                                       };
+                                       return headers;
+                                   }())
+                                   .perform();
+        if (get_cookiet_ret.has_value()) {
+            SPDLOG_ERROR("call {}: [{}]", m_cfg.flaresolverr, get_cookiet_ret.value());
+            co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+            ch->try_send(err, get_cookiet_ret.value());
+            co_return;
+        }
+
+        nlohmann::json rsp = nlohmann::json::parse(recv, nullptr, false);
+        if (rsp.is_discarded()) {
+            SPDLOG_ERROR("json parse error");
+            co_await ch->async_send(err, "json parse error", use_nothrow_awaitable);
+            co_return;
+        }
+        SPDLOG_INFO("rsp: {}", rsp.dump());
+        auto status = rsp.at("status").get<std::string>();
+        if (status != "ok") {
+            SPDLOG_ERROR("get cookie error");
+            co_await ch->async_send(err, "get cookie error", use_nothrow_awaitable);
+            co_return;
+        }
+        auto it =
+            std::ranges::find_if(rsp["solution"]["cookies"], [](auto& p) { return p["name"] == "cf_clearance"; });
+        if (it == rsp["solution"]["cookies"].end()) {
+            SPDLOG_ERROR("not found cookie");
+            co_await ch->async_send(err, "not found cookie", use_nothrow_awaitable);
+            co_return;
+        }
+        std::string user_agent = rsp["solution"].at("userAgent");
+        auto cookie_str = std::format("cf_clearance={}", (*it)["value"].get<std::string>());
+        // std::cout << rsp["solution"]["userAgent"].get<std::string>() << std::endl;
+        item = std::make_tuple(std::chrono::system_clock::now(), std::move(cookie_str), user_agent);
+    }
+    SPDLOG_INFO("cookie: {}", std::get<1>(item));
+    bool return_flag{true};
+    ScopeExit auto_free([&] mutable {
+        if (!return_flag)
+            return;
+        auto& [time_point, cookie, _] = item;
+        if (std::chrono::system_clock::now() - time_point < std::chrono::minutes(120))
+            cookie_queue.enqueue(std::move(item));
+    });
+    auto user_agent = std::get<2>(item);
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"Content-Type", "application/json"},
+        {"Cookie", std::get<1>(item)},
+        {"Origin", "https://gptchatly.com"},
+        {"Referer", "https://gptchatly.com/"},
+        {"User-Agent", user_agent},
+    };
+    auto ret =
+        Curl()
+            .setUrl("https://gptchatly.com/felch-response")
+            .setRecvHeadersCallback([](std::string) { return; })
+            .setRecvBodyCallback([&](std::string str) mutable {
+                boost::system::error_code err{};
+                if (!str.empty()) {
+                    nlohmann::json line_json = nlohmann::json::parse(str, nullptr, false);
+                    if (line_json.is_discarded()) {
+                        SPDLOG_ERROR("json parse error: [{}]", str);
+                        boost::asio::post(ch->get_executor(),
+                                          [=] { ch->try_send(err, std::format("json parse error: [{}]", str)); });
+                        return;
+                    }
+                    if (line_json.contains("chatGPTResponse"))
+                        boost::asio::post(ch->get_executor(),
+                                          [=] { ch->try_send(err, line_json["chatGPTResponse"].get<std::string>()); });
+                    else
+                        boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                }
+                return;
+            })
+            .setBody([&] {
+                constexpr std::string_view ask_json_str = R"({
+                            "past_conversations":[
+                                {
+                                    "role":"system",
+                                    "content":"Always reply in a language that user talks to you. Be concise. Don't repeat itself."
+                                }
+                            ]
+                        })";
+                nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                auto request_json = getConversationJson(json);
+                for (auto& j : request_json)
+                    ask_request["past_conversations"].push_back(j);
+                std::string ask_request_str = ask_request.dump();
+                SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+                return ask_request_str;
+            }())
+            .setHttpHeaders(headers)
+            .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
