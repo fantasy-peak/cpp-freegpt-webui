@@ -2657,12 +2657,14 @@ boost::asio::awaitable<void> FreeGpt::deepInfra(std::shared_ptr<Channel> ch, nlo
                            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
                            if (line_json.is_discarded()) {
                                SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                               ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               boost::asio::post(ch->get_executor(), [=] {
+                                   ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               });
                                continue;
                            }
                            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
                            if (!str.empty())
-                               ch->try_send(err, str);
+                               boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
                        }
                    })
                    .setBody([&] {
