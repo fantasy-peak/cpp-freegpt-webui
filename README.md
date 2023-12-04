@@ -114,7 +114,7 @@ docker run -it --rm \
 ```
 
 ### Start the flaresolverr docker [optional]
-This is not necessary, The some provider(aivvm) is enabled Cloudflare challenges, so we need use flaresolverr to solve it.
+This is not necessary, The some provider(aivvm,gptChatly) is enabled Cloudflare challenges, so we need use flaresolverr to solve it.
 ```
 docker run -d \
   --name=flaresolverr \
