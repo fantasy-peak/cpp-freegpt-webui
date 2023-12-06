@@ -1121,7 +1121,7 @@ boost::asio::awaitable<void> FreeGpt::chatForAi(std::shared_ptr<Channel> ch, nlo
     static std::unordered_multimap<std::string, std::string> headers{
         {"Content-Type", "application/json"},
         {"Origin", "https://chatforai.store"},
-        {"Referer", "https://chatforai.store/"},
+        {"Referer", "https://chatforai.store/?r=b"},
     };
     auto ret = Curl()
                    .setUrl("https://chatforai.store/api/handle/provider-openai")
@@ -1134,27 +1134,31 @@ boost::asio::awaitable<void> FreeGpt::chatForAi(std::shared_ptr<Channel> ch, nlo
                    .setBody([&] {
                        uint64_t timestamp = getTimestamp();
                        constexpr std::string_view request_str{R"({
-                            "conversationId": "id_1696984301982",
-                            "conversationType": "chat_continuous",
-                            "botId": "chat_continuous",
-                            "globalSettings": {
-                                "baseUrl": "https://api.openai.com",
-                                "model": "gpt-3.5-turbo",
-                                "messageHistorySize": 5,
-                                "temperature": 0.7,
-                                "top_p": 1
+                            "conversationId":"id_1701845910554",
+                            "conversationType":"chat_continuous",
+                            "botId":"chat_continuous",
+                            "globalSettings":{
+                                "baseUrl":"https://api.openai.com",
+                                "model":"gpt-3.5-turbo",
+                                "messageHistorySize":5,
+                                "temperature":0.7,
+                                "top_p":1,
+                                "stream":false
                             },
-                            "botSettings": {},
-                            "prompt": "hello",
-                            "messages": [{
-                                "role": "user",
-                                "content": "hello"
-                            }],
-                            "sign": "15d8e701706743ffa74f8b96c97bd1f79354c7da4a97438c81c6bb259004cd77",
-                            "timestamp": 1696984302017
+                            "botSettings":{
+                            },
+                            "prompt":"hello",
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "timestamp":1701845910677,
+                            "sign":"fd7fac179ff93e8745b3c7a61075e3d8062a795e7ca1cd3d7cf24e3303de7a95"
                         })"};
                        nlohmann::json request = nlohmann::json::parse(request_str, nullptr, false);
-                       auto conversation_id = std::format("id_{}", timestamp - 35);
+                       auto conversation_id = std::format("id_{}", timestamp - 123);
                        request["conversationId"] = conversation_id;
                        request["timestamp"] = timestamp;
                        request["sign"] = generate_signature(timestamp, prompt, conversation_id);
