@@ -1,6 +1,7 @@
 # Cpp FreeGPT WebUI
 
-[![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-gcc13/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-clang18/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![Docker Pulls](https://img.shields.io/docker/pulls/fantasypeak/freegpt?logo=docker
+[![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-gcc13/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-clang18/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://img.shields.io/badge/language-C%2B%2B23-yellow.svg
+)](https://en.wikipedia.org/wiki/C%2B%2B17) [![Docker Pulls](https://img.shields.io/docker/pulls/fantasypeak/freegpt?logo=docker
 )](https://hub.docker.com/r/fantasypeak/freegpt/)
 
 ## GPT 3.5/4
@@ -182,3 +183,4 @@ Please note the following:
 By using this repository or any code related to it, you agree to these terms. The author is not responsible for any
 copies, forks, or reuploads made by other users. This is the author's only account and repository. To prevent
 impersonation or irresponsible actions, you may comply with the GNU GPL license this Repository uses.
+
