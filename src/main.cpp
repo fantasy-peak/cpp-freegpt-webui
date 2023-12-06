@@ -337,7 +337,6 @@ int main(int, char** argv) {
         ADD_METHOD("gpt-3.5-turbo-stream-openai", FreeGpt::openAi);
 
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
-    ADD_METHOD("gpt-OpenAssistant-stream-HuggingChat", FreeGpt::huggingChat)
     ADD_METHOD("gpt-4-turbo-stream-you", FreeGpt::you);
     ADD_METHOD("gpt-3-stream-binjie", FreeGpt::binjie);
     ADD_METHOD("gpt-3.5-turbo-stream-GptGo", FreeGpt::gptGo);
@@ -348,13 +347,9 @@ int main(int, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-GeekGpt", FreeGpt::geekGpt);
     ADD_METHOD("llama2", FreeGpt::llama2);
     ADD_METHOD("gpt-3.5-turbo-stream-chatGptAi", FreeGpt::chatGptAi);
-    ADD_METHOD("gpt-3.5-turbo-stream-FakeGpt", FreeGpt::fakeGpt);
-    ADD_METHOD("gpt-3.5-turbo-stream-Vercel", FreeGpt::vercel);
     ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
     ADD_METHOD("gpt-4-stream-aivvm", FreeGpt::aivvm);
     ADD_METHOD("gpt-4-ChatGpt4Online", FreeGpt::chatGpt4Online);
-    ADD_METHOD("gpt-3.5-turbo-stream-ChatAnywhere", FreeGpt::chatAnywhere);
-    ADD_METHOD("gpt-3.5-turbo-ChatgptNext", FreeGpt::chatGptNext);
     ADD_METHOD("gpt-3.5-turbo-stream-gptTalkRu", FreeGpt::gptTalkru);
     ADD_METHOD("Llama-2-70b-chat-hf-stream-DeepInfra", FreeGpt::deepInfra);
     ADD_METHOD("gpt-3.5-turbo-gptChatly", FreeGpt::gptChatly);
