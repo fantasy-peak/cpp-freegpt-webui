@@ -345,7 +345,7 @@ int main(int, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-gptforlove", FreeGpt::gptForLove);
     ADD_METHOD("gpt-3.5-turbo-stream-ChatgptDemo", FreeGpt::chatGptDemo);
     ADD_METHOD("gpt-3.5-turbo-stream-GeekGpt", FreeGpt::geekGpt);
-    ADD_METHOD("llama2", FreeGpt::llama2);
+    ADD_METHOD("llama2-70B", FreeGpt::llama2);
     ADD_METHOD("gpt-3.5-turbo-stream-chatGptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
     ADD_METHOD("gpt-4-stream-aivvm", FreeGpt::aivvm);
