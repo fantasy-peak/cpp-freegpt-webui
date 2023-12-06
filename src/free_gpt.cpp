@@ -1407,8 +1407,8 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
                    })
                    .setBody([&] {
                        constexpr std::string_view ask_json_str = R"({
-                            "prompt":"[INST] hello [/INST]\n[INST] hello [/INST]\n",
-                            "version":"d24902e3fa9b698cc208b5e63136c4e26e828659a9f09827ca6ec5bb83014381",
+                            "prompt":"[INST] hello [/INST]\n",
+                            "version":"02e509c789964a7ea8736978a43525956ef40397be9033abf9fd2badfe68c9e3",
                             "systemPrompt":"You are a helpful assistant.",
                             "temperature":0.75,
                             "topP":0.9,
