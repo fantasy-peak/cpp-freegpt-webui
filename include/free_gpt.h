@@ -35,6 +35,7 @@ public:
     boost::asio::awaitable<void> gptTalkru(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> deepInfra(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gptChatly(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> voiGpt(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>
