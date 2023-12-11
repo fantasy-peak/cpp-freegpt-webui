@@ -1408,7 +1408,7 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
                    .setBody([&] {
                        constexpr std::string_view ask_json_str = R"({
                             "prompt":"[INST] hello [/INST]\n",
-                            "version":"02e509c789964a7ea8736978a43525956ef40397be9033abf9fd2badfe68c9e3",
+                            "model":"meta/llama-2-70b-chat",
                             "systemPrompt":"You are a helpful assistant.",
                             "temperature":0.75,
                             "topP":0.9,
@@ -1780,7 +1780,7 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
         {"User-Agent", user_agent},
     };
     auto ret = Curl()
-                   .setUrl("https://chat.aivvm.com/api/chat")
+                   .setUrl("https://chat.aivvm.com/api/openai/chat")
                    .setRecvHeadersCallback([](std::string) { return; })
                    .setRecvBodyCallback([&](std::string str) mutable {
                        boost::system::error_code err{};
@@ -1789,50 +1789,24 @@ boost::asio::awaitable<void> FreeGpt::aivvm(std::shared_ptr<Channel> ch, nlohman
                        return;
                    })
                    .setBody([&] {
-                       auto model = json.at("model").get<std::string>();
-                       if (model == "gpt-3.5-turbo-stream-aivvm") {
-                           constexpr std::string_view json_str = R"({
-                                "model":{
-                                    "id":"gpt-3.5-turbo",
-                                    "name":"GPT-3.5",
-                                    "maxLength":12000,
-                                    "tokenLimit":4096
-                                },
-                                "messages":[
-                                    {
-                                        "role":"user",
-                                        "content":"hello"
-                                    }
-                                ],
-                                "key":"",
-                                "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
-                                "temperature":0.7
-                            })";
-                           nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-                           request["messages"] = getConversationJson(json);
-                           SPDLOG_INFO("{}", request.dump(2));
-                           return request.dump();
-                       } else {
-                           constexpr std::string_view json_str = R"({
-                                "model":{
-                                    "id":"gpt-4",
-                                    "name":"GPT-4"
-                                },
-                                "messages":[
-                                    {
-                                        "role":"user",
-                                        "content":"hello"
-                                    }
-                                ],
-                                "key":"",
-                                "prompt":"You are ChatGPT, a large language model trained by OpenAI. Follow the user's instructions carefully. Respond using markdown.",
-                                "temperature":0.7
-                            })";
-                           nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
-                           request["messages"] = getConversationJson(json);
-                           SPDLOG_INFO("{}", request.dump(2));
-                           return request.dump();
-                       }
+                        constexpr std::string_view json_str = R"({
+                            "model":"gpt-3.5-turbo",
+                            "stream":true,
+                            "frequency_penalty":0,
+                            "presence_penalty":0,
+                            "temperature":0.6,
+                            "top_p":1,
+                            "messages":[
+                                {
+                                    "content":"hello",
+                                    "role":"user"
+                                }
+                            ]
+                        })";
+                        nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+                        request["messages"] = getConversationJson(json);
+                        SPDLOG_INFO("{}", request.dump(2));
+                        return request.dump();
                    }())
                    .setHttpHeaders(headers)
                    .perform();
