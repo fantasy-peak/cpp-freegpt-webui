@@ -2450,3 +2450,113 @@ boost::asio::awaitable<void> FreeGpt::huggingChat(std::shared_ptr<Channel> ch, n
     });
     co_return;
 }
+boost::asio::awaitable<void> FreeGpt::voiGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    std::string recv, header_str;
+    Curl curl;
+    auto ret = curl.setUrl("https://voigpt.com")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([&](std::string str) { header_str.append(str); })
+                   .setRecvBodyCallback([&](std::string str) { recv.append(str); })
+                   .perform();
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    auto response_header = Curl::parseHttpHeaders(header_str);
+    std::string cookie;
+    auto range = response_header.equal_range("Set-Cookie");
+    for (auto it = range.first; it != range.second; ++it) {
+        if (!(it->second.contains("csrftoken=")))
+            continue;
+        auto view = it->second | std::views::drop_while(isspace) | std::views::reverse |
+                    std::views::drop_while(isspace) | std::views::reverse;
+        auto fields = splitString(std::string{view.begin(), view.end()}, " ");
+        if (fields.size() < 1) {
+            co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+            ch->try_send(err, "can't get cookie");
+            co_return;
+        }
+        cookie = std::move(fields[0]);
+        break;
+    }
+    SPDLOG_INFO("cookie: [{}]", cookie);
+
+    std::unordered_multimap<std::string, std::string> http_headers{
+        {"Accept-Language", "de-DE,de;q=0.9,en-DE;q=0.8,en;q=0.7,en-US;q=0.6"},
+        {"Cookie", cookie},
+        {"origin", "https://voigpt.com"},
+        {"referer", "https://voigpt.com/"},
+        {"Sec-Ch-Ua-Mobile", "?0"},
+        {"Sec-Ch-Ua-Platform", "'Windows'"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-origin"},
+        {"X-Csrftoken",
+         [&] {
+             cookie.erase(0, 10);
+             cookie.pop_back();
+             return cookie;
+         }()},
+    };
+    ret = curl.setUrl("https://voigpt.com/generate_response/")
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([&](std::string) {})
+              .setRecvBodyCallback([&](std::string str) {
+                  boost::system::error_code err{};
+                  nlohmann::json line_json = nlohmann::json::parse(str, nullptr, false);
+                  if (line_json.is_discarded()) {
+                      SPDLOG_ERROR("json parse error: [{}]", str);
+                      boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                      return;
+                  }
+                  auto rsp_str = line_json["response"].get<std::string>();
+                  if (!rsp_str.empty())
+                      boost::asio::post(ch->get_executor(),
+                                        [=, rsp_str = std::move(rsp_str)] { ch->try_send(err, rsp_str); });
+              })
+              .clearHeaders()
+              .setHttpHeaders([&] -> auto& {
+                  http_headers.emplace("Content-Type", "application/json");
+                  return http_headers;
+              }())
+              .setBody([&] -> std::string {
+                  constexpr std::string_view ask_json_str = R"({"messages": [{"role": "user", "content": "hello"}]})";
+                  nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                  auto request_json = getConversationJson(json);
+                  ask_request["messages"] = request_json;
+                  std::string ask_request_str = ask_request.dump();
+                  SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+                  return ask_request_str;
+              }())
+              .perform();
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    co_return;
+}
+
+std::string md5(const std::string& str, bool reverse = true) {
+    unsigned char hash[MD5_DIGEST_LENGTH];
+
+    MD5_CTX md5;
+    MD5_Init(&md5);
+    MD5_Update(&md5, str.c_str(), str.size());
+    MD5_Final(hash, &md5);
+
+    std::stringstream ss;
+    for (int i = 0; i < MD5_DIGEST_LENGTH; i++)
+        ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+    auto md5_str = ss.str();
+    if (reverse)
+        std::ranges::reverse(md5_str);
+    return md5_str;
+}
