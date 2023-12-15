@@ -74,9 +74,9 @@ docker run -it --rm \
 Run the application(use http proxy) using Docker:
 ```
 docker run --rm -it \
-   -p 8858:8858 \
+   --net=host \
    --name freegpt \
-   -e HTTP_PROXY=http://127.0.0.1:8080 \
+   -e HTTP_PROXY=http://127.0.0.1:3128 \
    fantasypeak/freegpt:latest
 ```
 
