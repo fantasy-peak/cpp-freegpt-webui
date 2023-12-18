@@ -340,16 +340,11 @@ int main(int, char** argv) {
     ADD_METHOD("gpt-4-turbo-stream-you", FreeGpt::you);
     ADD_METHOD("gpt-3-stream-binjie", FreeGpt::binjie);
     ADD_METHOD("gpt-3.5-turbo-stream-GptGo", FreeGpt::gptGo);
-    ADD_METHOD("gpt-3.5-turbo-stream-gptalk", FreeGpt::gptalk);
-    ADD_METHOD("gpt-3.5-turbo-stream-ChatForAi", FreeGpt::chatForAi);
-    ADD_METHOD("gpt-3.5-turbo-stream-gptforlove", FreeGpt::gptForLove);
     ADD_METHOD("gpt-3.5-turbo-stream-ChatgptDemo", FreeGpt::chatGptDemo);
     ADD_METHOD("gpt-3.5-turbo-stream-GeekGpt", FreeGpt::geekGpt);
     ADD_METHOD("llama2-70B", FreeGpt::llama2);
     ADD_METHOD("gpt-3.5-turbo-stream-chatGptAi", FreeGpt::chatGptAi);
     ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
-    ADD_METHOD("gpt-4-ChatGpt4Online", FreeGpt::chatGpt4Online);
-    ADD_METHOD("gpt-3.5-turbo-stream-gptTalkRu", FreeGpt::gptTalkru);
     ADD_METHOD("Llama-2-70b-chat-hf-stream-DeepInfra", FreeGpt::deepInfra);
     ADD_METHOD("gpt-3.5-turbo-gptChatly", FreeGpt::gptChatly);
     ADD_METHOD("gpt-3.5-turbo-stream-AiChatOnline", FreeGpt::aiChatOnline);
