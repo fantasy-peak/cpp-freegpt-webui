@@ -1,5 +1,13 @@
 ---
 client_root_path: "../client"
-enable_proxy: true
+interval: 300
+work_thread_num: 8
+host: "0.0.0.0"
+port: 8858
+chat_path: "/chat"
 providers: []
+enable_proxy: true
+api_key: ""
 ip_white_list: []
+zeus: "http://127.0.0.1:8860"
+flaresolverr: "http://127.0.0.1:8191/v1"

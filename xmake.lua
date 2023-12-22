@@ -6,7 +6,7 @@ add_repositories("my_private_repo https://github.com/fantasy-peak/xmake-repo.git
 
 add_requires("openssl", {system = false})
 add_requires("zlib", {system = false})
-add_requires("yaml_cpp_struct", "nlohmann_json", "spdlog", "inja", "plusaes", "concurrentqueue")
+add_requires("yaml_cpp_struct v1.0.4", "nlohmann_json", "spdlog", "inja", "plusaes", "concurrentqueue")
 add_requires("boost", {configs = {iostreams = true}})
 
 set_languages("c++23")
