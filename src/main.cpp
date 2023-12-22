@@ -39,36 +39,8 @@ void setEnvironment(auto& cfg) {
         if (!upper_http_proxy.empty())
             cfg.http_proxy = std::move(upper_http_proxy);
     }
-    if (auto [chat_path] = getEnv("CHAT_PATH"); !chat_path.empty()) {
-        cfg.chat_path = std::move(chat_path);
-    }
     if (cfg.chat_path.back() == '/')
         cfg.chat_path.pop_back();
-    if (auto [port] = getEnv("PORT"); !port.empty())
-        cfg.port = std::move(port);
-    if (auto [host] = getEnv("HOST"); !host.empty())
-        cfg.host = std::move(host);
-    if (auto [work_thread_num] = getEnv("WORK_THREAD_NUM"); !work_thread_num.empty())
-        cfg.work_thread_num = std::atol(work_thread_num.c_str());
-    if (auto [providers] = getEnv("PROVIDERS"); !providers.empty()) {
-        nlohmann::json providers_list = nlohmann::json::parse(providers, nullptr, false);
-        if (!providers_list.is_discarded())
-            cfg.providers = providers_list.get<std::vector<std::string>>();
-    }
-    if (auto [api_key] = getEnv("API_KEY"); !api_key.empty())
-        cfg.api_key = std::move(api_key);
-    if (auto [interval] = getEnv("INTERVAL"); !interval.empty())
-        cfg.interval = std::atol(interval.c_str());
-    // export IP_WHITE_LIST="[\"127.0.0.1\",\"192.168.1.1\"]"
-    if (auto [ip_white_list_str] = getEnv("IP_WHITE_LIST"); !ip_white_list_str.empty()) {
-        nlohmann::json ip_white_list = nlohmann::json::parse(ip_white_list_str, nullptr, false);
-        if (!ip_white_list.is_discarded())
-            cfg.ip_white_list = ip_white_list.get<std::vector<std::string>>();
-    }
-    if (auto [zeus] = getEnv("ZEUS"); !zeus.empty())
-        cfg.zeus = std::move(zeus);
-    if (auto [flaresolverr] = getEnv("FLARESOLVERR"); !flaresolverr.empty())
-        cfg.flaresolverr = std::move(flaresolverr);
 }
 
 std::string createIndexHtml(const std::string& file, const Config& cfg) {
@@ -321,7 +293,7 @@ int main(int, char** argv) {
     ScopeExit cleanup{[=] { curl_global_cleanup(); }};
 
     spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e][thread %t][%!][%s:%#][%l] %v");
-    auto [config, error] = yaml_cpp_struct::from_yaml<Config>(argv[1]);
+    auto [config, error] = yaml_cpp_struct::from_yaml_env<Config>(argv[1], "");
     if (!config) {
         SPDLOG_ERROR("{}", error);
         return EXIT_FAILURE;
