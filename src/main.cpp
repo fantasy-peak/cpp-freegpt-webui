@@ -323,6 +323,7 @@ int main(int, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-fakeGpt", FreeGpt::fakeGpt);
     ADD_METHOD("gpt-3.5-turbo-stream-aura", FreeGpt::aura);
     ADD_METHOD("gpt6", FreeGpt::gpt6);
+    ADD_METHOD("gpt-3.5-turbo-stream-chatxyz", FreeGpt::chatxyz);
 
     SPDLOG_INFO("active provider:");
     for (auto& [provider, _] : gpt_function)
