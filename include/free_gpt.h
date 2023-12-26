@@ -34,6 +34,7 @@ public:
     boost::asio::awaitable<void> fakeGpt(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> aura(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> gpt6(std::shared_ptr<Channel>, nlohmann::json);
+    boost::asio::awaitable<void> chatxyz(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
     boost::asio::awaitable<std::expected<boost::beast::ssl_stream<boost::beast::tcp_stream>, std::string>>

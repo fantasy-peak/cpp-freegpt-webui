@@ -2121,28 +2121,28 @@ boost::asio::awaitable<void> FreeGpt::gpt6(std::shared_ptr<Channel> ch, nlohmann
                    .setProxy(m_cfg.http_proxy)
                    .setRecvHeadersCallback([](std::string) { return; })
                    .setRecvBodyCallback([&](std::string chunk_str) mutable {
-                        recv.append(chunk_str);
-                        while (true) {
-                            auto position = recv.find("\n");
-                            if (position == std::string::npos)
-                                break;
-                            auto msg = recv.substr(0, position + 1);
-                            recv.erase(0, position + 1);
-                            msg.pop_back();
-                            if (msg.empty() || !msg.contains("content"))
-                                continue;
-                            auto fields = splitString(msg, "data: ");
-                            boost::system::error_code err{};
-                            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
-                            if (line_json.is_discarded()) {
-                                SPDLOG_ERROR("json parse error: [{}]", fields.back());
-                                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
-                                continue;
-                            }
-                            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
-                            if (!str.empty())
-                                ch->try_send(err, str);
-                        }
+                       recv.append(chunk_str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               continue;
+                           }
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty())
+                               ch->try_send(err, str);
+                       }
                    })
                    .setBody([&] {
                        constexpr std::string_view ask_json_str = R"({
@@ -2173,6 +2173,91 @@ boost::asio::awaitable<void> FreeGpt::gpt6(std::shared_ptr<Channel> ch, nlohmann
                         })";
                        nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
                        ask_request["prompts"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::chatxyz(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "text/event-stream"},
+        {"content-type", "application/json"},
+        {"Referer", "https://chat.3211000.xyz/"},
+        {"Origin", "https://chat.3211000.xyz"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-origin"},
+        {"TE", "trailers"},
+        {"x-requested-with", "XMLHttpRequest"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://chat.3211000.xyz/api/openai/v1/chat/completions")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string chunk_str) mutable {
+                       recv.append(chunk_str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               continue;
+                           }
+                           if (line_json["choices"][0]["delta"]["content"].is_null())
+                               continue;
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty())
+                               ch->try_send(err, str);
+                       }
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "messages":[
+                                {
+                                    "role":"system",
+                                    "content":"\nYou are ChatGPT, a large language model trained by OpenAI.\nCarefully heed the user's instructions.\nRespond using Markdown.\nKnowledge cutoff: 2021-09\nCurrent model: gpt-3.5-turbo\nCurrent time: 2023/12/26 14:12:34\nLatex inline: $x^2$ \nLatex block: $$e=mc^2$$\n\n"
+                                },
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "stream":true,
+                            "model":"gpt-3.5-turbo",
+                            "temperature":0.5,
+                            "presence_penalty":0,
+                            "frequency_penalty":0,
+                            "top_p":1
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"][1]["content"] = prompt;
                        std::string ask_request_str = ask_request.dump();
                        SPDLOG_INFO("request: [{}]", ask_request_str);
                        return ask_request_str;
