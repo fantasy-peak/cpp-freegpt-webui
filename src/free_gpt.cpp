@@ -2097,3 +2097,93 @@ boost::asio::awaitable<void> FreeGpt::aura(std::shared_ptr<Channel> ch, nlohmann
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::gpt6(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"content-type", "application/json"},
+        {"Referer", "https://gpt6.ai/"},
+        {"Origin", "https://gpt6.ai"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "cross-site"},
+        {"TE", "trailers"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://seahorse-app-d29hu.ondigitalocean.app/api/v1/query")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string chunk_str) mutable {
+                        recv.append(chunk_str);
+                        while (true) {
+                            auto position = recv.find("\n");
+                            if (position == std::string::npos)
+                                break;
+                            auto msg = recv.substr(0, position + 1);
+                            recv.erase(0, position + 1);
+                            msg.pop_back();
+                            if (msg.empty() || !msg.contains("content"))
+                                continue;
+                            auto fields = splitString(msg, "data: ");
+                            boost::system::error_code err{};
+                            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                            if (line_json.is_discarded()) {
+                                SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                                continue;
+                            }
+                            auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                            if (!str.empty())
+                                ch->try_send(err, str);
+                        }
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "prompts":[
+                                {
+                                    "role":"user",
+                                    "content":"Hello"
+                                }
+                            ],
+                            "geoInfo":{
+                                "ip":"100.90.100.222",
+                                "hostname":"ip-100-090-100-222.um36.pools.vodafone-ip.de",
+                                "city":"Muenchen",
+                                "region":"North Rhine-Westphalia",
+                                "country":"DE",
+                                "loc":"44.0910,5.5827",
+                                "org":"AS3209 Vodafone GmbH",
+                                "postal":"41507",
+                                "timezone":"Europe/Berlin"
+                            },
+                            "paid":false,
+                            "character":{
+                                "textContent":"",
+                                "id":"52690ad6-22e4-4674-93d4-1784721e9944",
+                                "name":"GPT6",
+                                "htmlContent":""
+                            }
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["prompts"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
