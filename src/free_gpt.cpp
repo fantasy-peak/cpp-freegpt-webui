@@ -7,7 +7,7 @@
 #include <tuple>
 #include <vector>
 
-#include <concurrentqueue/concurrentqueue.h>
+#include <concurrentqueue.h>
 #include <curl/curl.h>
 #include <openssl/md5.h>
 #include <spdlog/spdlog.h>
