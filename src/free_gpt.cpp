@@ -2272,3 +2272,82 @@ boost::asio::awaitable<void> FreeGpt::chatxyz(std::shared_ptr<Channel> ch, nlohm
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::geminiProChat(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+    uint64_t timestamp = getTimestamp();
+
+    auto generate_signature = [](uint64_t timestamp, const std::string& message) {
+        std::string s = std::to_string(timestamp) + ":" + message + ":9C4680FB-A4E1-6BC7-052A-7F68F9F5AD1F";
+        unsigned char hash[SHA256_DIGEST_LENGTH];
+        SHA256_CTX sha256;
+        if (!SHA256_Init(&sha256))
+            throw std::runtime_error("SHA-256 initialization failed");
+        if (!SHA256_Update(&sha256, s.c_str(), s.length()))
+            throw std::runtime_error("SHA-256 update failed");
+        if (!SHA256_Final(hash, &sha256))
+            throw std::runtime_error("SHA-256 finalization failed");
+        std::stringstream ss;
+        for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+            ss << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(hash[i]);
+        return ss.str();
+    };
+    std::string signature = generate_signature(timestamp, prompt);
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "t*/*"},
+        {"content-type", "application/json"},
+        {"Referer", "https://geminiprochat.com/"},
+        {"Origin", "https://geminiprochat.com"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-origin"},
+        {"TE", "trailers"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://geminiprochat.com/api/generate")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string chunk_str) mutable {
+                       boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, chunk_str); });
+                       return;
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "parts":[
+                                        {
+                                            "text":"Hello"
+                                        }
+                                    ]
+                                }
+                            ],
+                            "time":1704256758261,
+                            "pass":null,
+                            "sign":"e5cbb75324af44b4d9e138238335a7f2120bdae2109625883c3dc44884917086"
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"][0]["parts"][0]["text"] = prompt;
+                       ask_request["sign"] = signature;
+                       ask_request["time"] = timestamp;
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
