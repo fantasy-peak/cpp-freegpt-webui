@@ -33,7 +33,7 @@ To run the application, run the following command:
 1. Check local g++ version, need g++ version >= gcc version 13.1.0 (GCC)
 
 2. install xmake
-curl -kfsSL https://xmake.io/shget.text | bash -s v2.8.3
+curl -kfsSL https://xmake.io/shget.text | bash -s v2.8.6
 source ~/.xmake/profile
 
 3. install libcurl-impersonate, ubuntu (apt-get install libcurl4-openssl-dev) centos7 (yum install libcurl-devel.x86_64)

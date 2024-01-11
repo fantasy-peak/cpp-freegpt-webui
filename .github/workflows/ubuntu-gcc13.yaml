@@ -24,9 +24,7 @@ jobs:
           cd /usr/lib64
           sudo tar -xvf libcurl-impersonate-v0.6.0-alpha.1.x86_64-linux-gnu.tar.gz
           cd -
-          wget https://github.com/xmake-io/xmake/releases/download/v2.8.3/xmake-v2.8.3.xz.run
-          chmod 777 xmake-v2.8.3.xz.run
-          ./xmake-v2.8.3.xz.run > a.txt
+          curl -kfsSL https://xmake.io/shget.text | bash -s v2.8.6
 
       - name: checkout
         uses: actions/checkout@v3
