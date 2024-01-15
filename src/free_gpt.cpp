@@ -2351,3 +2351,79 @@ boost::asio::awaitable<void> FreeGpt::geminiProChat(std::shared_ptr<Channel> ch,
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::freeChatGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://free.chatgpt.org.uk/api/openai/v1/chat/completions")
+                   .setProxy(m_cfg.http_proxy)
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "content":"Hello"
+                                }
+                            ],
+                            "stream":true,
+                            "model":"gpt-3.5-turbo",
+                            "temperature":0.5,
+                            "presence_penalty":0,
+                            "frequency_penalty":0,
+                            "top_p":1
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .setRecvBodyCallback([&](std::string str) {
+                       recv.append(str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               boost::asio::post(ch->get_executor(), [=] {
+                                   ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               });
+                               continue;
+                           }
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty() && str != "[DONE]")
+                               boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                       }
+                       return;
+                   })
+                   .setHttpHeaders([&] -> auto {
+                       std::unordered_multimap<std::string, std::string> headers{
+                           {"Accept", "application/json, text/event-stream"},
+                           {"Origin", "https://free.chatgpt.org.uk"},
+                           {"Referer", "https://free.chatgpt.org.uk/"},
+                           {"Host", "free.chatgpt.org.uk"},
+                       };
+                       return headers;
+                   }())
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
