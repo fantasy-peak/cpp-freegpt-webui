@@ -30,14 +30,18 @@ jobs:
           cd /usr/lib64
           sudo tar -xvf libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
           cd -
-          curl -kfsSL https://xmake.io/shget.text | bash -s v2.8.6
+          # curl -kfsSL https://xmake.io/shget.text | bash -s v2.8.6
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: v2.8.6
 
       - name: checkout
         uses: actions/checkout@v3
       - name: build
         run: |
           export XMAKE_ROOT="y"
-          source ~/.xmake/profile
+          # source ~/.xmake/profile
           g++-13 -v
           clang++-19 -v
           export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
