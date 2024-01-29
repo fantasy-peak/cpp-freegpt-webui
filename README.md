@@ -1,6 +1,6 @@
 # Cpp FreeGPT WebUI
 
-[![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-gcc13/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-clang18/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://img.shields.io/badge/language-C%2B%2B23-yellow.svg
+[![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-gcc13/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://github.com/fantasy-peak/cpp-freegpt-webui/workflows/ubuntu-clang19/badge.svg)](https://github.com/fantasy-peak/cpp-freegpt-webui/actions) [![](https://img.shields.io/badge/language-C%2B%2B23-yellow.svg
 )](https://en.wikipedia.org/wiki/C%2B%2B17) [![Docker Pulls](https://img.shields.io/docker/pulls/fantasypeak/freegpt?logo=docker
 )](https://hub.docker.com/r/fantasypeak/freegpt/)
 
