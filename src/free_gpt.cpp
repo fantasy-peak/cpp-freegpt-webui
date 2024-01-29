@@ -1052,9 +1052,14 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
 
     static std::unordered_multimap<std::string, std::string> headers{
         {"Accept", "*/*"},
+        {"Accept-Encoding", "gzip, deflate, br"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-origin"},
         {"origin", "https://www.llama2.ai"},
         {"referer", "https://www.llama2.ai/"},
         {"Content-Type", "text/plain;charset=UTF-8"},
+        {"Host", "www.llama2.ai"},
     };
     auto ret = Curl()
                    .setUrl("https://www.llama2.ai/api")
@@ -1066,7 +1071,7 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
                    })
                    .setBody([&] {
                        constexpr std::string_view ask_json_str = R"({
-                            "prompt":"[INST] hello [/INST]\n",
+                            "prompt":"<s>[INST] <<SYS>>\nYou are a helpful assistant.\n<</SYS>>\n\nhello [/INST]\n",
                             "model":"meta/llama-2-70b-chat",
                             "systemPrompt":"You are a helpful assistant.",
                             "temperature":0.75,
@@ -1076,7 +1081,8 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
                             "audio":null
                         })";
                        nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
-                       ask_request["prompt"] = std::format("[INST] {} [/INST]\n", prompt);
+                       ask_request["prompt"] = std::format(
+                           "<s>[INST] <<SYS>>\nYou are a helpful assistant.\n<</SYS>>\n\n{} [/INST]\n", prompt);
                        std::string ask_request_str = ask_request.dump();
                        SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
                        return ask_request_str;
@@ -1088,7 +1094,7 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
     if (ret) {
         SPDLOG_ERROR("{}", ret.value());
         co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
-        ch->try_send(err, ret.value());
+        boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, ret.value()); });
     }
     co_return;
 }
