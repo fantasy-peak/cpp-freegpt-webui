@@ -1,4 +1,4 @@
-name: ubuntu-clang18
+name: ubuntu-clang19
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
           sudo add-apt-repository "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs) main"
           sudo apt update
           sudo apt list | grep clang
-          sudo apt install clang-18 -y
+          sudo apt install clang-19 -y
           wget https://github.com/lwthiker/curl-impersonate/releases/download/v0.5.4/libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz
           sudo mv libcurl-impersonate-v0.5.4.x86_64-linux-gnu.tar.gz /usr/lib64
           cd /usr/lib64
@@ -39,7 +39,7 @@ jobs:
           export XMAKE_ROOT="y"
           source ~/.xmake/profile
           g++-13 -v
-          clang++-18 -v
+          clang++-19 -v
           export LD_LIBRARY_PATH=/usr/lib64:$LD_LIBRARY_PATH
           export LIBRARY_PATH=/usr/lib64:$LIBRARY_PATH
           export CXX=g++-13
@@ -49,8 +49,8 @@ jobs:
           sed '/add_cxflags("-O2 -Wall -Wno-missing-field-initializers -Wno-ignored-qualifiers")/a add_defines("__cpp_concepts=202002L")' xmake.lua > temp.txt
           mv temp.txt xmake.lua
           cat xmake.lua
-          export CXX=clang++-18
-          export CC=clang-18
+          export CXX=clang++-19
+          export CC=clang-19
           xmake build -y
           xmake install -o .
           ldd ./bin/cpp-freegpt-webui
