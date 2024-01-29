@@ -2779,3 +2779,746 @@ boost::asio::awaitable<void> FreeGpt::gptTalkru(std::shared_ptr<Channel> ch, nlo
     }
     co_return;
 }
+boost::asio::awaitable<void> FreeGpt::freeChatGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://free.chatgpt.org.uk/api/openai/v1/chat/completions")
+                   .setProxy(m_cfg.http_proxy)
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "messages":[
+                                {
+                                    "role":"user",
+                                    "content":"Hello"
+                                }
+                            ],
+                            "stream":true,
+                            "model":"gpt-3.5-turbo",
+                            "temperature":0.5,
+                            "presence_penalty":0,
+                            "frequency_penalty":0,
+                            "top_p":1
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .setRecvBodyCallback([&](std::string str) {
+                       recv.append(str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               boost::asio::post(ch->get_executor(), [=] {
+                                   ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               });
+                               continue;
+                           }
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty() && str != "[DONE]")
+                               boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                       }
+                       return;
+                   })
+                   .setHttpHeaders([&] -> auto {
+                       std::unordered_multimap<std::string, std::string> headers{
+                           {"Accept", "application/json, text/event-stream"},
+                           {"Origin", "https://free.chatgpt.org.uk"},
+                           {"Referer", "https://free.chatgpt.org.uk/"},
+                           {"Host", "free.chatgpt.org.uk"},
+                       };
+                       return headers;
+                   }())
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+boost::asio::awaitable<void> FreeGpt::chatxyz(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "text/event-stream"},
+        {"content-type", "application/json"},
+        {"Referer", "https://chat.3211000.xyz/"},
+        {"Origin", "https://chat.3211000.xyz"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-origin"},
+        {"TE", "trailers"},
+        {"x-requested-with", "XMLHttpRequest"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://chat.3211000.xyz/api/openai/v1/chat/completions")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string chunk_str) mutable {
+                       recv.append(chunk_str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               continue;
+                           }
+                           if (line_json["choices"][0]["delta"]["content"].is_null())
+                               continue;
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty())
+                               ch->try_send(err, str);
+                       }
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "messages":[
+                                {
+                                    "role":"system",
+                                    "content":"\nYou are ChatGPT, a large language model trained by OpenAI.\nCarefully heed the user's instructions.\nRespond using Markdown.\nKnowledge cutoff: 2021-09\nCurrent model: gpt-3.5-turbo\nCurrent time: 2023/12/26 14:12:34\nLatex inline: $x^2$ \nLatex block: $$e=mc^2$$\n\n"
+                                },
+                                {
+                                    "role":"user",
+                                    "content":"hello"
+                                }
+                            ],
+                            "stream":true,
+                            "model":"gpt-3.5-turbo",
+                            "temperature":0.5,
+                            "presence_penalty":0,
+                            "frequency_penalty":0,
+                            "top_p":1
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["messages"][1]["content"] = prompt;
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+boost::asio::awaitable<void> FreeGpt::chatGptAi(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    ScopeExit auto_exit{[&] { ch->close(); }};
+    boost::system::error_code err{};
+
+    constexpr std::string_view host = "chatgpt.ai";
+    constexpr std::string_view port = "443";
+
+    constexpr std::string_view user_agent{
+        R"(Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36)"};
+
+    boost::beast::http::request<boost::beast::http::empty_body> req{boost::beast::http::verb::get, "/", 11};
+    req.set(boost::beast::http::field::host, "chatgpt.ai");
+    req.set(boost::beast::http::field::user_agent, user_agent);
+    req.set("Accept", "*/*");
+
+    int recreate_num{0};
+create_client:
+    boost::asio::ssl::context ctx(boost::asio::ssl::context::tls);
+    ctx.set_verify_mode(boost::asio::ssl::verify_none);
+    auto client = co_await createHttpClient(ctx, host, port);
+    if (!client.has_value()) {
+        SPDLOG_ERROR("createHttpClient: {}", client.error());
+        co_await ch->async_send(err, client.error(), use_nothrow_awaitable);
+        co_return;
+    }
+    auto& stream_ = client.value();
+
+    std::string chunk_body;
+    std::string cookie;
+    auto ret = co_await sendRequestRecvChunk(
+        ch, stream_, req, 200, [&ch, &chunk_body](std::string recv_str) { chunk_body.append(std::move(recv_str)); },
+        [&](const boost::beast::http::parser<false, boost::beast::http::empty_body>& p) {
+            auto& headers = p.get();
+            for (const auto& header : headers) {
+                if (boost::beast::http::to_string(header.name()) == "Set-Cookie") {
+                    cookie = header.value();
+                    return;
+                }
+            }
+        });
+    SPDLOG_ERROR("cookie: {}", cookie);
+    if (ret == Status::Close && recreate_num == 0) {
+        recreate_num++;
+        goto create_client;
+    }
+    if (ret == Status::HasError)
+        co_return;
+
+    static std::string pattern{R"(data-system='(.*?)')"};
+
+    std::vector<std::string> matches = findAll(pattern, chunk_body);
+    if (matches.empty()) {
+        SPDLOG_ERROR("parsing login failed");
+        co_await ch->async_send(err, chunk_body, use_nothrow_awaitable);
+        co_return;
+    }
+
+    auto html_unescape = [](const std::string& text) {
+        std::string result = text;
+        boost::replace_all(result, "&amp;", "&");
+        boost::replace_all(result, "&lt;", "<");
+        boost::replace_all(result, "&gt;", ">");
+        boost::replace_all(result, "&quot;", "\"");
+        boost::replace_all(result, "&#39;", "'");
+        return result;
+    };
+    std::string html_json_str;
+    std::regex regex("'(.*?)'");
+    std::smatch result;
+    if (std::regex_search(matches[0], result, regex))
+        html_json_str = html_unescape(result[1]);
+    if (html_json_str.empty()) {
+        SPDLOG_ERROR("extract json fail");
+        co_await ch->async_send(err, chunk_body, use_nothrow_awaitable);
+        co_return;
+    }
+    nlohmann::json j = nlohmann::json::parse(html_json_str, nullptr, false);
+    if (j.is_discarded()) {
+        SPDLOG_ERROR("json parse error");
+        co_await ch->async_send(err, "json parse error", use_nothrow_awaitable);
+        co_return;
+    }
+    SPDLOG_INFO("json: {}", j.dump());
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::beast::http::request<boost::beast::http::string_body> request{boost::beast::http::verb::post,
+                                                                         "/wp-json/mwai-ui/v1/chats/submit", 11};
+    request.set(boost::beast::http::field::host, host);
+    request.set("authority", "chatgpt.ai");
+    request.set("accept", "*/*");
+    request.set("accept-language", R"(en,fr-FR;q=0.9,fr;q=0.8,es-ES;q=0.7,es;q=0.6,en-US;q=0.5,am;q=0.4,de;q=0.3)");
+    request.set("cache-control", "no-cache");
+    request.set("origin", "https://chatgpt.ai");
+    request.set("pragma", "no-cache");
+    request.set(boost::beast::http::field::referer, "https://chatgpt.ai/");
+    request.set("sec-ch-ua", R"("Not.A/Brand";v="8", "Chromium";v="114", "Google Chrome";v="114")");
+    request.set("sec-ch-ua-mobile", "?0");
+    request.set("sec-ch-ua-platform", R"("Windows")");
+    request.set("sec-fetch-dest", "empty");
+    request.set("sec-fetch-mode", "cors");
+    request.set("sec-fetch-site", "same-origin");
+    request.set("Cookie", cookie);
+    request.set(boost::beast::http::field::user_agent, user_agent);
+    request.set("Content-Type", "application/json");
+    request.set("X-Wp-Nonce", j["restNonce"]);
+
+    constexpr std::string_view json_str = R"({
+        "botId":"chatbot-9vy3t5",
+        "customId":null,
+        "session":"N/A",
+        "chatId":"6tkwezdhivn",
+        "contextId":1048,
+        "messages":[
+            {
+                "role":"user",
+                "content":"hello"
+            }
+        ],
+        "newMessage":"hello",
+        "stream":true
+    })";
+    nlohmann::json request_json = nlohmann::json::parse(json_str, nullptr, false);
+    request_json["botId"] = j["botId"];
+    request_json["customId"] = j["customId"];
+    request_json["session"] = j["sessionId"];
+    request_json["contextId"] = j["contextId"];
+    request_json["chatId"] = [](int len) -> std::string {
+        static std::string chars{"abcdefghijklmnopqrstuvwxyz0123456789"};
+        static std::string letter{"abcdefghijklmnopqrstuvwxyz"};
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 1000000);
+        std::string random_string;
+        random_string += chars[dis(gen) % letter.length()];
+        len = len - 1;
+        for (int i = 0; i < len; i++)
+            random_string += chars[dis(gen) % chars.length()];
+        return random_string;
+    }(11);
+    request_json["messages"] = getConversationJson(json);
+
+    request_json["newMessage"] = prompt;
+
+    SPDLOG_INFO("request: {}", request_json.dump());
+    request.body() = request_json.dump();
+    request.prepare_payload();
+
+    std::string recv;
+    co_await sendRequestRecvChunk(ch, stream_, request, 200, [&](std::string str) {
+        recv.append(str);
+        while (true) {
+            auto position = recv.find("\n");
+            if (position == std::string::npos)
+                break;
+            auto msg = recv.substr(0, position + 1);
+            recv.erase(0, position + 1);
+            msg.pop_back();
+            if (msg.empty())
+                continue;
+            auto fields = splitString(msg, "data: ");
+            boost::system::error_code err{};
+            nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+            if (line_json.is_discarded()) {
+                SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                continue;
+            }
+            auto type = line_json["type"].get<std::string>();
+            if (type == "live")
+                ch->try_send(err, line_json["data"].get<std::string>());
+        }
+    });
+    co_return;
+}
+boost::asio::awaitable<void> FreeGpt::chatGptDemo(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    std::unordered_multimap<std::string, std::string> http_headers{
+        {"authority", "chat.chatgptdemo.net"},
+        {"origin", "https://chat.chatgptdemo.net"},
+        {"referer", "https://chat.chatgptdemo.net/"},
+    };
+
+    std::string recv, header_str;
+    Curl curl;
+    auto ret = curl.setUrl("https://chat.chatgptdemo.net/")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([&](std::string str) { header_str.append(str); })
+                   .setRecvBodyCallback([&](std::string str) { recv.append(str); })
+                   .setHttpHeaders(http_headers)
+                   .perform();
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    // auto response_header = Curl::parseHttpHeaders(header_str);
+    // for (auto& [k, v] : response_header)
+    //     SPDLOG_INFO("{}: {}", k, v);
+
+    auto match_ret = findAll(R"(<div id="USERID" style="display: none">(.*)<\/div>)", recv);
+    if (match_ret.empty()) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("not found userid"));
+        co_return;
+    }
+    auto extract_value = [](const std::string& str) {
+        size_t start = str.find('>') + 1;
+        size_t end = str.find('<', start);
+        std::string value = str.substr(start, end - start);
+        return value;
+    };
+    auto user_id = extract_value(match_ret[0]);
+    SPDLOG_INFO("user_id: [{}]", user_id);
+    recv.clear();
+    ret = curl.setUrl("https://chat.chatgptdemo.net/new_chat")
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([&](std::string) {})
+              .setRecvBodyCallback([&](std::string str) { recv.append(str); })
+              .clearHeaders()
+              .setHttpHeaders([&] -> auto& {
+                  http_headers.emplace("Content-Type", "application/json");
+                  return http_headers;
+              }())
+              .setBody([&] -> std::string {
+                  constexpr std::string_view json_str = R"({"user_id":"user_id"})";
+                  nlohmann::json request = nlohmann::json::parse(json_str, nullptr, false);
+                  request["user_id"] = user_id;
+                  return request.dump();
+              }())
+              .perform();
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+
+    SPDLOG_INFO("recv: [{}]", recv);
+    nlohmann::json get_text_rsp = nlohmann::json::parse(recv, nullptr, false);
+    auto chat_id = get_text_rsp["id_"].get<std::string>();
+    SPDLOG_INFO("chat_id: [{}]", chat_id);
+
+    recv.clear();
+    ret = curl.setUrl("https://chat.chatgptdemo.net/chat_api_stream")
+              .setProxy(m_cfg.http_proxy)
+              .setRecvHeadersCallback([&](std::string) {})
+              .setRecvBodyCallback([&](std::string str) {
+                  recv.append(str);
+                  while (true) {
+                      auto position = recv.find("\n");
+                      if (position == std::string::npos)
+                          break;
+                      auto msg = recv.substr(0, position + 1);
+                      recv.erase(0, position + 1);
+                      msg.pop_back();
+                      if (msg.empty() || !msg.contains("content"))
+                          continue;
+                      if (!msg.starts_with("data: "))
+                          continue;
+                      msg.erase(0, 6);
+                      boost::system::error_code err{};
+                      nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
+                      if (line_json.is_discarded()) {
+                          SPDLOG_ERROR("json parse error: [{}]", msg);
+                          boost::asio::post(ch->get_executor(),
+                                            [=] { ch->try_send(err, std::format("json parse error: [{}]", msg)); });
+                          continue;
+                      }
+                      auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                      if (!str.empty())
+                          boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                  }
+              })
+              .clearHeaders()
+              .setHttpHeaders(http_headers)
+              .setBody([&] -> std::string {
+                  constexpr std::string_view ask_json_str =
+                      R"({"question": "hello", "chat_id": "6524f3640d0d824902f598c1", "timestamp": 1696920420510})";
+                  nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                  ask_request["question"] = prompt;
+                  ask_request["chat_id"] = chat_id;
+                  uint64_t timestamp = getTimestamp();
+                  ask_request["timestamp"] = timestamp;
+                  std::string ask_request_str = ask_request.dump();
+                  SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
+                  return ask_request_str;
+              }())
+              .perform();
+    if (ret) {
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+boost::asio::awaitable<void> FreeGpt::gptGo(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    boost::system::error_code err{};
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    std::multimap<std::string, std::string> params{
+        {"ask", prompt},
+    };
+    std::string recv;
+    Curl curl;
+    auto ret = curl.setUrl("https://gptgo.ai/get_token.php")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvBodyCallback([&](std::string str) {
+                       recv.append(str);
+                       return;
+                   })
+                   .setBody(paramsToQueryStr(params))
+                   .setHttpHeaders([&] -> auto {
+                       std::unordered_multimap<std::string, std::string> headers{
+                           {"Content-Type", "application/x-www-form-urlencoded"},
+                           {"Accept", "*"},
+                           {"Origin", "https://gptgo.ai"},
+                           {"Referer", "https://gptgo.ai/"},
+                       };
+                       return headers;
+                   }())
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+        co_return;
+    }
+    SPDLOG_INFO("recv: [{}]", recv);
+    if (recv.size() < 30) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, std::format("invalid token"));
+        co_return;
+    }
+    std::string token = recv.substr(10, recv.size() - 30);
+    SPDLOG_INFO("token: [{}]", token);
+    token = decodeBase64(token);
+    SPDLOG_INFO("decode token: [{}]", token);
+    recv.clear();
+    auto url = std::format("https://api.gptgo.ai/web.php?array_chat={}", token);
+    ret = curl.setUrl(url)
+              .setOpt(CURLOPT_HTTPGET, 1L)
+              .setProxy(m_cfg.http_proxy)
+              .setRecvBodyCallback([&](std::string str) {
+                  recv.append(str);
+                  while (true) {
+                      auto position = recv.find("\n");
+                      if (position == std::string::npos)
+                          break;
+                      auto msg = recv.substr(0, position + 1);
+                      recv.erase(0, position + 1);
+                      msg.pop_back();
+                      if (msg.empty() || !msg.contains("content"))
+                          continue;
+                      auto fields = splitString(msg, "data: ");
+                      boost::system::error_code err{};
+                      nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                      if (line_json.is_discarded()) {
+                          SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                          boost::asio::post(ch->get_executor(), [=] {
+                              ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                          });
+                          continue;
+                      }
+                      auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                      if (!str.empty() && str != "[DONE]")
+                          boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                  }
+                  return;
+              })
+              .setHttpHeaders([&] -> auto {
+                  std::unordered_multimap<std::string, std::string> headers{
+                      {"Accept", "*"},
+                      {"Origin", "https://gptgo.ai"},
+                      {"Referer", "https://gptgo.ai/"},
+                  };
+                  return headers;
+              }())
+              .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+
+boost::asio::awaitable<void> FreeGpt::aiChatOnline(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "text/event-stream"},
+        {"content-type", "application/json"},
+        {"Referer", "https://aichatonline.org/chatgpt/chat/"},
+        {"Origin", "https://aichatonline.org"},
+        {"Alt-Used", "aichatonline.org"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-origin"},
+    };
+    auto get_random_string = [](int len) -> std::string {
+        static std::string chars{"abcdefghijklmnopqrstuvwxyz0123456789"};
+        static std::string letter{"abcdefghijklmnopqrstuvwxyz"};
+        std::random_device rd;
+        std::mt19937 gen(rd());
+        std::uniform_int_distribution<> dis(0, 1000000);
+        std::string random_string;
+        random_string += chars[dis(gen) % letter.length()];
+        len = len - 1;
+        for (int i = 0; i < len; i++)
+            random_string += chars[dis(gen) % chars.length()];
+        return random_string;
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://aichatonline.org/chatgpt/wp-json/mwai-ui/v1/chats/submit")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       //    boost::system::error_code err{};
+                       //    boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, str); });
+                       recv.append(str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty())
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               boost::asio::post(ch->get_executor(), [=] {
+                                   ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               });
+                               continue;
+                           }
+                           auto type = line_json["type"].get<std::string>();
+                           if (type == "live") {
+                               auto msg = line_json["data"].get<std::string>();
+                               boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, msg); });
+                           }
+                       }
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "botId": "default",
+                            "customId": null,
+                            "session": "9jd0rhttij6neetg",
+                            "chatId": "ci3jfyp1ki",
+                            "contextId": 7,
+                            "messages": [
+                                {
+                                "role": "user",
+                                "content": "hello"
+                                }
+                            ],
+                            "newMessage": "hello",
+                            "newImageId": null,
+                            "stream": true
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["session"] = get_random_string(16);
+                       ask_request["chatId"] = get_random_string(10);
+                       ask_request["messages"] = getConversationJson(json);
+                       ask_request["newMessage"] = prompt;
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
+boost::asio::awaitable<void> FreeGpt::gpt6(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"content-type", "application/json"},
+        {"Referer", "https://gpt6.ai/"},
+        {"Origin", "https://gpt6.ai"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "cross-site"},
+        {"TE", "trailers"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://seahorse-app-d29hu.ondigitalocean.app/api/v1/query")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string chunk_str) mutable {
+                       recv.append(chunk_str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("content"))
+                               continue;
+                           auto fields = splitString(msg, "data: ");
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(fields.back(), nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", fields.back());
+                               ch->try_send(err, std::format("json parse error: [{}]", fields.back()));
+                               continue;
+                           }
+                           auto str = line_json["choices"][0]["delta"]["content"].get<std::string>();
+                           if (!str.empty())
+                               ch->try_send(err, str);
+                       }
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "prompts":[
+                                {
+                                    "role":"user",
+                                    "content":"Hello"
+                                }
+                            ],
+                            "geoInfo":{
+                                "ip":"100.90.100.222",
+                                "hostname":"ip-100-090-100-222.um36.pools.vodafone-ip.de",
+                                "city":"Muenchen",
+                                "region":"North Rhine-Westphalia",
+                                "country":"DE",
+                                "loc":"44.0910,5.5827",
+                                "org":"AS3209 Vodafone GmbH",
+                                "postal":"41507",
+                                "timezone":"Europe/Berlin"
+                            },
+                            "paid":false,
+                            "character":{
+                                "textContent":"",
+                                "id":"52690ad6-22e4-4674-93d4-1784721e9944",
+                                "name":"GPT6",
+                                "htmlContent":""
+                            }
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["prompts"] = getConversationJson(json);
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
