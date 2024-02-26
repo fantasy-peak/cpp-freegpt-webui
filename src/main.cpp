@@ -319,6 +319,7 @@ int main(int, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-fakeGpt", FreeGpt::fakeGpt);
     ADD_METHOD("gpt-3.5-turbo-stream-aura", FreeGpt::aura);
     ADD_METHOD("gpt-3.5-turbo-stream-geminiProChat", FreeGpt::geminiProChat);
+    ADD_METHOD("gpt-3.5-turbo-stream-flowgpt", FreeGpt::flowGpt);
 
     SPDLOG_INFO("active provider:");
     for (auto& [provider, _] : gpt_function)

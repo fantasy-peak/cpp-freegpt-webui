@@ -1684,3 +1684,93 @@ boost::asio::awaitable<void> FreeGpt::geminiProChat(std::shared_ptr<Channel> ch,
     }
     co_return;
 }
+
+boost::asio::awaitable<void> FreeGpt::flowGpt(std::shared_ptr<Channel> ch, nlohmann::json json) {
+    co_await boost::asio::post(boost::asio::bind_executor(*m_thread_pool_ptr, boost::asio::use_awaitable));
+    ScopeExit _exit{[=] { boost::asio::post(ch->get_executor(), [=] { ch->close(); }); }};
+
+    auto prompt = json.at("meta").at("content").at("parts").at(0).at("content").get<std::string>();
+
+    boost::system::error_code err{};
+    std::unordered_multimap<std::string, std::string> headers{
+        {"Accept", "*/*"},
+        {"content-type", "application/json"},
+        {"Referer", "https://flowgpt.com/"},
+        {"Origin", "https://flowgpt.com"},
+        {"Sec-Fetch-Dest", "empty"},
+        {"Sec-Fetch-Mode", "cors"},
+        {"Sec-Fetch-Site", "same-site"},
+        {"Sec-Ch-Ua-Mobile", "?0"},
+        {"Authorization", "Bearer null"},
+    };
+    std::string recv;
+    auto ret = Curl()
+                   .setUrl("https://backend-k8s.flowgpt.com/v2/chat-anonymous")
+                   .setProxy(m_cfg.http_proxy)
+                   .setRecvHeadersCallback([](std::string) { return; })
+                   .setRecvBodyCallback([&](std::string str) mutable {
+                       recv.append(str);
+                       while (true) {
+                           auto position = recv.find("\n");
+                           if (position == std::string::npos)
+                               break;
+                           auto msg = recv.substr(0, position + 1);
+                           recv.erase(0, position + 1);
+                           msg.pop_back();
+                           if (msg.empty() || !msg.contains("event"))
+                               continue;
+                           boost::system::error_code err{};
+                           nlohmann::json line_json = nlohmann::json::parse(msg, nullptr, false);
+                           if (line_json.is_discarded()) {
+                               SPDLOG_ERROR("json parse error: [{}]", msg);
+                               boost::asio::post(ch->get_executor(), [=] {
+                                   ch->try_send(err, std::format("json parse error: [{}]", msg));
+                               });
+                               continue;
+                           }
+                           auto type = line_json["event"].get<std::string>();
+                           if (type == "text") {
+                               auto new_message = line_json["data"].get<std::string>();
+                               if (new_message.empty())
+                                   continue;
+                               if (!new_message.empty())
+                                   boost::asio::post(ch->get_executor(), [=] { ch->try_send(err, new_message); });
+                           }
+                       }
+                       return;
+                   })
+                   .setBody([&] {
+                       constexpr std::string_view ask_json_str = R"({
+                            "model": "gpt-3.5-turbo",
+                            "nsfw": false,
+                            "question": "hello",
+                            "history": [
+                                {
+                                    "role": "assistant",
+                                    "content": "Hello, how can I help you today?"
+                                }
+                            ],
+                            "system": "You are helpful assistant. Follow the user's instructions carefully.",
+                            "temperature": 0.7,
+                            "promptId": "model-gpt-3.5-turbo",
+                            "documentIds": [],
+                            "chatFileDocumentIds": [],
+                            "generateImage": false,
+                            "generateAudio": false
+                        })";
+                       nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
+                       ask_request["question"] = prompt;
+                       std::string ask_request_str = ask_request.dump();
+                       SPDLOG_INFO("request: [{}]", ask_request_str);
+                       return ask_request_str;
+                   }())
+                   .clearHeaders()
+                   .setHttpHeaders(headers)
+                   .perform();
+    if (ret.has_value()) {
+        SPDLOG_ERROR("{}", ret.value());
+        co_await boost::asio::post(boost::asio::bind_executor(ch->get_executor(), boost::asio::use_awaitable));
+        ch->try_send(err, ret.value());
+    }
+    co_return;
+}
