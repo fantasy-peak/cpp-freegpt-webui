@@ -851,18 +851,16 @@ boost::asio::awaitable<void> FreeGpt::llama2(std::shared_ptr<Channel> ch, nlohma
                    })
                    .setBody([&] {
                        constexpr std::string_view ask_json_str = R"({
-                            "prompt":"<s>[INST] <<SYS>>\nYou are a helpful assistant.\n<</SYS>>\n\nhello [/INST]\n",
-                            "model":"meta/llama-2-70b-chat",
-                            "systemPrompt":"You are a helpful assistant.",
-                            "temperature":0.75,
-                            "topP":0.9,
-                            "maxTokens":800,
-                            "image":null,
-                            "audio":null
+                            "prompt": "[INST] hello [/INST]\n",
+                            "model": "meta/llama-2-70b-chat",
+                            "systemPrompt": "You are a helpful assistant.",
+                            "temperature": 0.75,
+                            "topP": 0.9,
+                            "maxTokens": 8000,
+                            "image": null
                         })";
                        nlohmann::json ask_request = nlohmann::json::parse(ask_json_str, nullptr, false);
-                       ask_request["prompt"] = std::format(
-                           "<s>[INST] <<SYS>>\nYou are a helpful assistant.\n<</SYS>>\n\n{} [/INST]\n", prompt);
+                       ask_request["prompt"] = std::format("[INST] {} [/INST]\n", prompt);
                        std::string ask_request_str = ask_request.dump();
                        SPDLOG_INFO("ask_request_str: [{}]", ask_request_str);
                        return ask_request_str;
