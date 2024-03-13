@@ -311,14 +311,8 @@ int main(int, char** argv) {
     ADD_METHOD("gpt-3.5-turbo-stream-yqcloud", FreeGpt::yqcloud);
     ADD_METHOD("gpt-4-turbo-stream-you", FreeGpt::you);
     ADD_METHOD("gpt-3-stream-binjie", FreeGpt::binjie);
-    ADD_METHOD("gpt-3.5-turbo-stream-GeekGpt", FreeGpt::geekGpt);
     ADD_METHOD("llama2-70B", FreeGpt::llama2);
-    ADD_METHOD("gpt-3.5-turbo-stream-aivvm", FreeGpt::aivvm);
     ADD_METHOD("Llama-2-70b-chat-hf-stream-DeepInfra", FreeGpt::deepInfra);
-    ADD_METHOD("gpt-3.5-turbo-gptChatly", FreeGpt::gptChatly);
-    ADD_METHOD("gpt-3.5-turbo-stream-fakeGpt", FreeGpt::fakeGpt);
-    ADD_METHOD("gpt-3.5-turbo-stream-aura", FreeGpt::aura);
-    ADD_METHOD("gpt-3.5-turbo-stream-geminiProChat", FreeGpt::geminiProChat);
     ADD_METHOD("gpt-3.5-turbo-stream-flowgpt", FreeGpt::flowGpt);
 
     SPDLOG_INFO("active provider:");
@@ -326,9 +320,7 @@ int main(int, char** argv) {
         SPDLOG_INFO("      {}", provider);
 
     SPDLOG_INFO("\n{}", yaml_cpp_struct::yaml_to_json(yaml_cfg_str.value()).dump(2));
-    std::cout << "\033[32m"
-              << "GitHub: https://github.com/fantasy-peak/cpp-freegpt-webui"
-              << "\033[0m" << std::endl;
+    std::cout << "\033[32m" << "GitHub: https://github.com/fantasy-peak/cpp-freegpt-webui" << "\033[0m" << std::endl;
 
     IoContextPool pool{cfg.work_thread_num};
     pool.start();

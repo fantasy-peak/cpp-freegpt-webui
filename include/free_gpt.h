@@ -23,13 +23,7 @@ public:
     boost::asio::awaitable<void> you(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> binjie(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> llama2(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> geekGpt(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> aivvm(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> deepInfra(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> gptChatly(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> fakeGpt(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> aura(std::shared_ptr<Channel>, nlohmann::json);
-    boost::asio::awaitable<void> geminiProChat(std::shared_ptr<Channel>, nlohmann::json);
     boost::asio::awaitable<void> flowGpt(std::shared_ptr<Channel>, nlohmann::json);
 
 private:
